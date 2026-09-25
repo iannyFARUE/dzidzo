@@ -1,10 +1,18 @@
+import re
 from datetime import datetime
 
 from fastapi import FastAPI, Request, HTTPException, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from schemas import PostCreate, PostResponse
+
+
+def slugify(title: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
 
 app = FastAPI()
 
@@ -13,17 +21,43 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["current_year"] = datetime.now().year
 
-
-@app.exception_handler(StarletteHTTPException)
-async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+@app.exception_handler(RequestValidationError)
+def validation_exception_handler(request: Request, exception: RequestValidationError):
     if request.url.path.startswith("/api"):
-        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content={"detail": exception.errors()},
+        )
+
     return templates.TemplateResponse(
         request,
         "error.html",
-        {"status_code": exc.status_code, "detail": exc.detail, "title": str(exc.status_code)},
+        {
+            "status_code": status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "title": status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "detail": "Invalid request. Please check your input and try again.",
+        },
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+    )
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    message = (
+        exc.detail
+        if exc.detail
+        else "An error occurred. Please check your request and try again."
+    )
+    if request.url.path.startswith("/api"):
+        return JSONResponse({"detail": message}, status_code=exc.status_code)
+    return templates.TemplateResponse(
+        request,
+        "error.html",
+        {"status_code": exc.status_code, "detail": message, "title": str(exc.status_code)},
         status_code=exc.status_code,
     )
+
+
+
 
 posts = [
     {
@@ -108,14 +142,36 @@ def post_detail(request: Request, slug: str):
         {"post": post, "more_posts": more_posts, "title": post["title"]},
     )
 
-@app.get("/api/posts")
+@app.get("/api/posts", response_model=list[PostResponse])
 def get_posts():
     return posts
 
 
-@app.get("/api/posts/{post_id}")
+@app.get("/api/posts/{post_id}", response_model=PostResponse)
 def get_post(post_id: int):
     for post in posts:
         if post.get("id") == post_id:
             return post
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
+
+
+@app.post("/api/posts", response_model=PostResponse, status_code=status.HTTP_201_CREATED)
+def create_post(post_in: PostCreate):
+    now = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
+    new_post = {
+        "id": max((p["id"] for p in posts), default=0) + 1,
+        "slug": slugify(post_in.title),
+        "title": post_in.title,
+        "subtitle": post_in.subtitle,
+        "content": post_in.content,
+        "cover_image": post_in.cover_image,
+        "author": posts[0]["author"],
+        "tags": post_in.tags,
+        "claps": 0,
+        "comments_count": 0,
+        "read_time_minutes": max(1, len(post_in.content.split()) // 200),
+        "published_at": now,
+        "updated_at": now,
+    }
+    posts.append(new_post)
+    return new_post
