@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>
+      {% if title %} Dzidzo - {{ title }} {% else %} Dzidzo {% endif %}
+    </title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/dist/style.css" />
+  </head>
+  <body class="bg-white text-gray-900 font-sans antialiased">
+    <header class="sticky top-0 z-10 bg-white/90 backdrop-blur border-b border-gray-200">
+      <div class="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
+        <a href="/" class="font-serif text-2xl font-bold tracking-tight">Dzidzo</a>
+        <div class="flex items-center gap-5">
+          <a
+            href="#"
+            class="hidden sm:flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-900"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="w-5 h-5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
+            </svg>
+            Write
+          </a>
+          <button type="button" class="text-gray-600 hover:text-gray-900" aria-label="Notifications">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="w-5 h-5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
+            </svg>
+          </button>
+          <img src="https://i.pravatar.cc/150?img=68" alt="Profile" class="w-8 h-8 rounded-full object-cover" />
+        </div>
+      </div>
+    </header>
+    {% block content %} {% endblock content %}
+
+    <footer class="border-t border-gray-200 mt-16">
+      <div class="max-w-6xl mx-auto px-4 sm:px-6 py-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm text-gray-500">
+        <a href="#" class="hover:text-gray-800">Help</a>
+        <a href="#" class="hover:text-gray-800">Status</a>
+        <a href="#" class="hover:text-gray-800">About</a>
+        <a href="#" class="hover:text-gray-800">Careers</a>
+        <a href="#" class="hover:text-gray-800">Press</a>
+        <a href="#" class="hover:text-gray-800">Blog</a>
+        <a href="#" class="hover:text-gray-800">Privacy</a>
+        <a href="#" class="hover:text-gray-800">Terms</a>
+        <a href="#" class="hover:text-gray-800">Text to speech</a>
+        <span>&copy; {{ current_year }} Dzidzo</span>
+      </div>
+    </footer>
+  </body>
+</html>

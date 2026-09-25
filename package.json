@@ -1,0 +1,24 @@
+{
+  "name": "dzidzo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tailwind CSS build for the Dzidzo templates",
+  "scripts": {
+    "build:css": "tailwindcss -i ./static/src/input.css -o ./static/dist/style.css --minify",
+    "watch:css": "tailwindcss -i ./static/src/input.css -o ./static/dist/style.css --watch"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iannyFARUE/dzidzo.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/iannyFARUE/dzidzo/issues"
+  },
+  "homepage": "https://github.com/iannyFARUE/dzidzo#readme",
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.3",
+    "tailwindcss": "^4.3.3"
+  }
+}

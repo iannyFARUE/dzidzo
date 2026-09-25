@@ -46,3 +46,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Node / Tailwind CLI
+node_modules/
+static/dist/

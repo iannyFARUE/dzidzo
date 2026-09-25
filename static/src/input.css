@@ -1,0 +1,7 @@
+@import "tailwindcss";
+@source "../../templates";
+
+@theme {
+  --font-sans: "Inter", sans-serif;
+  --font-serif: "Source Serif 4", Georgia, serif;
+}

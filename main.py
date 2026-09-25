@@ -1,9 +1,15 @@
+from datetime import datetime
+
 from fastapi import FastAPI, Request
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 app = FastAPI()
 
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 templates = Jinja2Templates(directory="templates")
+templates.env.globals["current_year"] = datetime.now().year
 
 posts = [
     {
@@ -71,7 +77,10 @@ posts = [
 @app.get("/", include_in_schema=False)
 @app.get("/posts", include_in_schema=False)
 def home(request: Request):
-    return templates.TemplateResponse(request, "home.html")
+    topics = sorted({tag for post in posts for tag in post["tags"]})
+    return templates.TemplateResponse(
+        request, "home.html", {"posts": posts, "topics": topics, "title": "Home"}
+    )
 
 @app.get("/api/posts")
 def get_posts():
