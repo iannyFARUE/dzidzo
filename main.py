@@ -1,8 +1,10 @@
 from datetime import datetime
 
 from fastapi import FastAPI, Request, HTTPException, status
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 app = FastAPI()
 
@@ -10,6 +12,18 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["current_year"] = datetime.now().year
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    if request.url.path.startswith("/api"):
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+    return templates.TemplateResponse(
+        request,
+        "error.html",
+        {"status_code": exc.status_code, "detail": exc.detail, "title": str(exc.status_code)},
+        status_code=exc.status_code,
+    )
 
 posts = [
     {
