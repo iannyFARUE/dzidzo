@@ -1,22 +1,54 @@
+from typing import Annotated
 import re
 from datetime import datetime
 
-from fastapi import FastAPI, Request, HTTPException, status
+from fastapi import Depends, FastAPI, Request, HTTPException, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from schemas import PostCreate, PostResponse
+import models
+from database import Base, engine, get_db
+from schemas import PostCreate, PostResponse, UserCreate, UserResponse
+
+DbSession = Annotated[Session, Depends(get_db)]
 
 
 def slugify(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
 
+
+def unique_slug(db: Session, title: str) -> str:
+    base = slugify(title)
+    slug = base
+    suffix = 2
+    while db.scalar(select(models.Post).where(models.Post.slug == slug)) is not None:
+        slug = f"{base}-{suffix}"
+        suffix += 1
+    return slug
+
+
+def get_or_create_tags(db: Session, tag_names: list[str]) -> list[models.Tag]:
+    tags = []
+    for name in tag_names:
+        tag = db.scalar(select(models.Tag).where(models.Tag.name == name))
+        if tag is None:
+            tag = models.Tag(name=name)
+            db.add(tag)
+        tags.append(tag)
+    return tags
+
+
+Base.metadata.create_all(bind=engine)
+
 app = FastAPI()
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/media", StaticFiles(directory="media"), name="media")
 
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["current_year"] = datetime.now().year
@@ -57,121 +89,82 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     )
 
 
-
-
-posts = [
-    {
-        "id": 1,
-        "slug": "getting-started-with-fastapi",
-        "title": "Getting Started with FastAPI",
-        "subtitle": "A modern, fast web framework for building APIs with Python",
-        "content": "FastAPI is a modern, fast web framework for building APIs with Python 3.7+ based on standard type hints. In this post we cover installation, your first endpoint, and automatic docs.",
-        "cover_image": "https://images.unsplash.com/photo-1517694712202-14dd9538aa97",
-        "author": {
-            "id": 101,
-            "name": "Ian Madhara",
-            "username": "ianmadhara",
-            "avatar": "https://i.pravatar.cc/150?img=12",
-        },
-        "tags": ["python", "fastapi", "backend"],
-        "claps": 342,
-        "comments_count": 12,
-        "read_time_minutes": 5,
-        "published_at": "2026-08-14T09:30:00Z",
-        "updated_at": "2026-08-15T11:00:00Z",
-    },
-    {
-        "id": 2,
-        "slug": "why-i-switched-to-python",
-        "title": "Why I Switched to Python",
-        "subtitle": "Readability and ecosystem make it a joy to work with",
-        "content": "After years of juggling multiple languages, Python's clean syntax and vast ecosystem won me over. Here's what changed my mind.",
-        "cover_image": "https://images.unsplash.com/photo-1526379095098-d400fd0bf935",
-        "author": {
-            "id": 102,
-            "name": "Jane Doe",
-            "username": "janedoe",
-            "avatar": "https://i.pravatar.cc/150?img=32",
-        },
-        "tags": ["python", "career", "opinion"],
-        "claps": 189,
-        "comments_count": 4,
-        "read_time_minutes": 3,
-        "published_at": "2026-08-20T14:15:00Z",
-        "updated_at": "2026-08-20T14:15:00Z",
-    },
-    {
-        "id": 3,
-        "slug": "building-a-medium-clone",
-        "title": "Building a Medium Clone",
-        "subtitle": "From an empty folder to a working blogging API",
-        "content": "In this post we walk through building a blogging platform backend from scratch using FastAPI, covering posts, authors, and tags along the way.",
-        "cover_image": "https://images.unsplash.com/photo-1499750310107-5fef28a66643",
-        "author": {
-            "id": 103,
-            "name": "John Smith",
-            "username": "johnsmith",
-            "avatar": "https://i.pravatar.cc/150?img=5",
-        },
-        "tags": ["tutorial", "fastapi", "webdev"],
-        "claps": 521,
-        "comments_count": 27,
-        "read_time_minutes": 8,
-        "published_at": "2026-09-01T08:00:00Z",
-        "updated_at": "2026-09-05T16:45:00Z",
-    },
-]
-
 @app.get("/", include_in_schema=False, name="home")
 @app.get("/posts", include_in_schema=False, name="posts")
-def home(request: Request):
-    topics = sorted({tag for post in posts for tag in post["tags"]})
+def home(request: Request, db: DbSession):
+    posts = db.scalars(select(models.Post).order_by(models.Post.published_at.desc())).all()
+    topics = sorted({tag.name for post in posts for tag in post.tags})
     return templates.TemplateResponse(
         request, "home.html", {"posts": posts, "topics": topics, "title": "Home"}
     )
 
 @app.get("/posts/{slug}", include_in_schema=False, name="post_detail")
-def post_detail(request: Request, slug: str):
-    post = next((p for p in posts if p["slug"] == slug), None)
+def post_detail(request: Request, slug: str, db: DbSession):
+    post = db.scalar(select(models.Post).where(models.Post.slug == slug))
     if post is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
-    more_posts = [p for p in posts if p["slug"] != slug][:2]
+    more_posts = db.scalars(
+        select(models.Post)
+        .where(models.Post.slug != slug)
+        .order_by(models.Post.published_at.desc())
+        .limit(2)
+    ).all()
     return templates.TemplateResponse(
         request,
         "post.html",
-        {"post": post, "more_posts": more_posts, "title": post["title"]},
+        {"post": post, "more_posts": more_posts, "title": post.title},
     )
 
 @app.get("/api/posts", response_model=list[PostResponse])
-def get_posts():
-    return posts
+def get_posts(db: DbSession):
+    return db.scalars(select(models.Post).order_by(models.Post.published_at.desc())).all()
 
 
 @app.get("/api/posts/{post_id}", response_model=PostResponse)
-def get_post(post_id: int):
-    for post in posts:
-        if post.get("id") == post_id:
-            return post
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
+def get_post(post_id: int, db: DbSession):
+    post = db.get(models.Post, post_id)
+    if post is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
+    return post
 
 
 @app.post("/api/posts", response_model=PostResponse, status_code=status.HTTP_201_CREATED)
-def create_post(post_in: PostCreate):
-    now = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
-    new_post = {
-        "id": max((p["id"] for p in posts), default=0) + 1,
-        "slug": slugify(post_in.title),
-        "title": post_in.title,
-        "subtitle": post_in.subtitle,
-        "content": post_in.content,
-        "cover_image": post_in.cover_image,
-        "author": posts[0]["author"],
-        "tags": post_in.tags,
-        "claps": 0,
-        "comments_count": 0,
-        "read_time_minutes": max(1, len(post_in.content.split()) // 200),
-        "published_at": now,
-        "updated_at": now,
-    }
-    posts.append(new_post)
-    return new_post
+def create_post(post_in: PostCreate, db: DbSession):
+    author = db.get(models.User, post_in.user_id)
+    if author is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+
+    post = models.Post(
+        slug=unique_slug(db, post_in.title),
+        title=post_in.title,
+        subtitle=post_in.subtitle,
+        content=post_in.content,
+        cover_image=post_in.cover_image,
+        author=author,
+        tags=get_or_create_tags(db, post_in.tags),
+        read_time_minutes=max(1, len(post_in.content.split()) // 200),
+    )
+    db.add(post)
+    db.commit()
+    db.refresh(post)
+    return post
+
+
+@app.post("/api/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+def create_user(user_in: UserCreate, db: DbSession):
+    exists = db.scalar(
+        select(models.User).where(
+            (models.User.username == user_in.username) | (models.User.email == user_in.email)
+        )
+    )
+    if exists is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="username or email already registered",
+        )
+
+    user = models.User(**user_in.model_dump())
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
