@@ -13,7 +13,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import models
 from database import Base, engine, get_db
-from schemas import PostCreate, PostResponse, UserCreate, UserResponse
+from schemas import PostCreate, PostResponse, PostUpdate, UserCreate, UserResponse
 
 DbSession = Annotated[Session, Depends(get_db)]
 
@@ -22,14 +22,18 @@ def slugify(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
 
 
-def unique_slug(db: Session, title: str) -> str:
+def unique_slug(db: Session, title: str, exclude_post_id: int | None = None) -> str:
     base = slugify(title)
     slug = base
     suffix = 2
-    while db.scalar(select(models.Post).where(models.Post.slug == slug)) is not None:
+    while True:
+        query = select(models.Post).where(models.Post.slug == slug)
+        if exclude_post_id is not None:
+            query = query.where(models.Post.id != exclude_post_id)
+        if db.scalar(query) is None:
+            return slug
         slug = f"{base}-{suffix}"
         suffix += 1
-    return slug
 
 
 def get_or_create_tags(db: Session, tag_names: list[str]) -> list[models.Tag]:
@@ -161,6 +165,32 @@ def create_post(post_in: PostCreate, db: DbSession):
         read_time_minutes=max(1, len(post_in.content.split()) // 200),
     )
     db.add(post)
+    db.commit()
+    db.refresh(post)
+    return post
+
+
+@app.patch("/api/posts/{post_id}", response_model=PostResponse)
+def update_post(post_id: int, post_in: PostUpdate, db: DbSession):
+    post = db.get(models.Post, post_id)
+    if post is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
+
+    updates = post_in.model_dump(exclude_unset=True)
+
+    if "title" in updates:
+        post.title = updates["title"]
+        post.slug = unique_slug(db, updates["title"], exclude_post_id=post.id)
+    if "subtitle" in updates:
+        post.subtitle = updates["subtitle"]
+    if "content" in updates:
+        post.content = updates["content"]
+        post.read_time_minutes = max(1, len(updates["content"].split()) // 200)
+    if "cover_image" in updates:
+        post.cover_image = updates["cover_image"]
+    if "tags" in updates:
+        post.tags = get_or_create_tags(db, updates["tags"])
+
     db.commit()
     db.refresh(post)
     return post

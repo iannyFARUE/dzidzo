@@ -59,3 +59,12 @@ class PostResponse(PostBase):
 
 class PostCreate(PostBase):
     user_id: int = Field(gt=0)
+
+
+class PostUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=100)
+    subtitle: str | None = Field(default=None, min_length=1, max_length=200)
+    content: str | None = Field(default=None, min_length=1)
+    cover_image: str | None = Field(default=None, min_length=1, max_length=300)
+    tags: list[TagName] | None = Field(default=None, max_length=10)
+
