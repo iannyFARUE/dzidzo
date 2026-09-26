@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Table, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Table, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -19,9 +19,9 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    username: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    username: Mapped[str] = mapped_column(String(50), nullable=False)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    email: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    email: Mapped[str] = mapped_column(String(120), nullable=False)
     avatar: Mapped[str] = mapped_column(
         String(300),
         nullable=False,
@@ -34,6 +34,21 @@ class User(Base):
     )
 
     posts: Mapped[list[Post]] = relationship(back_populates="author")
+
+    __table_args__ = (
+        Index(
+            "ux_users_username_active",
+            "username",
+            unique=True,
+            sqlite_where=text("deleted_at IS NULL"),
+        ),
+        Index(
+            "ux_users_email_active",
+            "email",
+            unique=True,
+            sqlite_where=text("deleted_at IS NULL"),
+        ),
+    )
 
 
 class Tag(Base):
