@@ -1,6 +1,6 @@
 from typing import Annotated
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import Depends, FastAPI, Request, HTTPException, status
 from fastapi.exceptions import RequestValidationError
@@ -13,7 +13,16 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import models
 from database import Base, engine, get_db
-from schemas import PostCreate, PostResponse, PostUpdate, UserCreate, UserResponse
+from schemas import (
+    PostCreate,
+    PostReplace,
+    PostResponse,
+    PostUpdate,
+    UserCreate,
+    UserReplace,
+    UserResponse,
+    UserUpdate,
+)
 
 DbSession = Annotated[Session, Depends(get_db)]
 
@@ -45,6 +54,29 @@ def get_or_create_tags(db: Session, tag_names: list[str]) -> list[models.Tag]:
             db.add(tag)
         tags.append(tag)
     return tags
+
+
+def get_active_user(db: Session, user_id: int) -> models.User | None:
+    user = db.get(models.User, user_id)
+    if user is None or user.deleted_at is not None:
+        return None
+    return user
+
+
+def check_username_email_available(
+    db: Session, username: str, email: str, exclude_user_id: int | None = None
+) -> None:
+    query = select(models.User).where(
+        models.User.deleted_at.is_(None),
+        (models.User.username == username) | (models.User.email == email),
+    )
+    if exclude_user_id is not None:
+        query = query.where(models.User.id != exclude_user_id)
+    if db.scalar(query) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="username or email already registered",
+        )
 
 
 Base.metadata.create_all(bind=engine)
@@ -121,7 +153,11 @@ def post_detail(request: Request, slug: str, db: DbSession):
 
 @app.get("/users/{username}", include_in_schema=False, name="user_posts")
 def user_posts(request: Request, username: str, db: DbSession):
-    author = db.scalar(select(models.User).where(models.User.username == username))
+    author = db.scalar(
+        select(models.User).where(
+            models.User.username == username, models.User.deleted_at.is_(None)
+        )
+    )
     if author is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
     posts = db.scalars(
@@ -150,7 +186,7 @@ def get_post(post_id: int, db: DbSession):
 
 @app.post("/api/posts", response_model=PostResponse, status_code=status.HTTP_201_CREATED)
 def create_post(post_in: PostCreate, db: DbSession):
-    author = db.get(models.User, post_in.user_id)
+    author = get_active_user(db, post_in.user_id)
     if author is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
 
@@ -196,9 +232,37 @@ def update_post(post_id: int, post_in: PostUpdate, db: DbSession):
     return post
 
 
+@app.put("/api/posts/{post_id}", response_model=PostResponse)
+def replace_post(post_id: int, post_in: PostReplace, db: DbSession):
+    post = db.get(models.Post, post_id)
+    if post is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
+
+    post.title = post_in.title
+    post.slug = unique_slug(db, post_in.title, exclude_post_id=post.id)
+    post.subtitle = post_in.subtitle
+    post.content = post_in.content
+    post.cover_image = post_in.cover_image
+    post.tags = get_or_create_tags(db, post_in.tags)
+    post.read_time_minutes = max(1, len(post_in.content.split()) // 200)
+
+    db.commit()
+    db.refresh(post)
+    return post
+
+
+@app.delete("/api/posts/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_post(post_id: int, db: DbSession):
+    post = db.get(models.Post, post_id)
+    if post is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
+    db.delete(post)
+    db.commit()
+
+
 @app.get("/api/users/{user_id}", response_model=UserResponse)
 def get_user(user_id: int, db: DbSession):
-    user = db.get(models.User, user_id)
+    user = get_active_user(db, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
     return user
@@ -206,7 +270,7 @@ def get_user(user_id: int, db: DbSession):
 
 @app.get("/api/users/{user_id}/posts", response_model=list[PostResponse])
 def get_user_posts(user_id: int, db: DbSession):
-    user = db.get(models.User, user_id)
+    user = get_active_user(db, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
     return db.scalars(
@@ -218,19 +282,60 @@ def get_user_posts(user_id: int, db: DbSession):
 
 @app.post("/api/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def create_user(user_in: UserCreate, db: DbSession):
-    exists = db.scalar(
-        select(models.User).where(
-            (models.User.username == user_in.username) | (models.User.email == user_in.email)
-        )
-    )
-    if exists is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="username or email already registered",
-        )
+    check_username_email_available(db, user_in.username, user_in.email)
 
     user = models.User(**user_in.model_dump())
     db.add(user)
     db.commit()
     db.refresh(user)
     return user
+
+
+@app.patch("/api/users/{user_id}", response_model=UserResponse)
+def update_user(user_id: int, user_in: UserUpdate, db: DbSession):
+    user = get_active_user(db, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+
+    updates = user_in.model_dump(exclude_unset=True)
+    check_username_email_available(
+        db,
+        username=updates.get("username", user.username),
+        email=updates.get("email", user.email),
+        exclude_user_id=user.id,
+    )
+
+    for field, value in updates.items():
+        setattr(user, field, value)
+
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@app.put("/api/users/{user_id}", response_model=UserResponse)
+def replace_user(user_id: int, user_in: UserReplace, db: DbSession):
+    user = get_active_user(db, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+
+    check_username_email_available(db, user_in.username, user_in.email, exclude_user_id=user.id)
+
+    user.username = user_in.username
+    user.name = user_in.name
+    user.email = user_in.email
+    user.avatar = user_in.avatar
+
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@app.delete("/api/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user(user_id: int, db: DbSession):
+    user = get_active_user(db, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+
+    user.deleted_at = datetime.now(UTC)
+    db.commit()

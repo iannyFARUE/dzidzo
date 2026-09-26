@@ -31,6 +31,17 @@ class Author(UserResponse):
     pass
 
 
+class UserReplace(UserBase):
+    pass
+
+
+class UserUpdate(BaseModel):
+    username: str | None = Field(default=None, min_length=1, max_length=50)
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    email: str | None = Field(default=None, min_length=1, max_length=120)
+    avatar: str | None = Field(default=None, min_length=1, max_length=300)
+
+
 class PostBase(BaseModel):
     title: str = Field(min_length=1, max_length=100)
     subtitle: str = Field(min_length=1, max_length=200)
@@ -59,6 +70,10 @@ class PostResponse(PostBase):
 
 class PostCreate(PostBase):
     user_id: int = Field(gt=0)
+
+
+class PostReplace(PostBase):
+    pass
 
 
 class PostUpdate(BaseModel):

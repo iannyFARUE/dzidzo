@@ -27,6 +27,11 @@ class User(Base):
         nullable=False,
         default="/static/profile_pics/default.jpg",
     )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=None,
+    )
 
     posts: Mapped[list[Post]] = relationship(back_populates="author")
 
