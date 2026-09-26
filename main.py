@@ -115,6 +115,22 @@ def post_detail(request: Request, slug: str, db: DbSession):
         {"post": post, "more_posts": more_posts, "title": post.title},
     )
 
+@app.get("/users/{username}", include_in_schema=False, name="user_posts")
+def user_posts(request: Request, username: str, db: DbSession):
+    author = db.scalar(select(models.User).where(models.User.username == username))
+    if author is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+    posts = db.scalars(
+        select(models.Post)
+        .where(models.Post.user_id == author.id)
+        .order_by(models.Post.published_at.desc())
+    ).all()
+    return templates.TemplateResponse(
+        request,
+        "user_posts.html",
+        {"author": author, "posts": posts, "title": author.name},
+    )
+
 @app.get("/api/posts", response_model=list[PostResponse])
 def get_posts(db: DbSession):
     return db.scalars(select(models.Post).order_by(models.Post.published_at.desc())).all()
