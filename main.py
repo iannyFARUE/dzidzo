@@ -150,6 +150,26 @@ def create_post(post_in: PostCreate, db: DbSession):
     return post
 
 
+@app.get("/api/users/{user_id}", response_model=UserResponse)
+def get_user(user_id: int, db: DbSession):
+    user = db.get(models.User, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+    return user
+
+
+@app.get("/api/users/{user_id}/posts", response_model=list[PostResponse])
+def get_user_posts(user_id: int, db: DbSession):
+    user = db.get(models.User, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+    return db.scalars(
+        select(models.Post)
+        .where(models.Post.user_id == user_id)
+        .order_by(models.Post.published_at.desc())
+    ).all()
+
+
 @app.post("/api/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def create_user(user_in: UserCreate, db: DbSession):
     exists = db.scalar(
