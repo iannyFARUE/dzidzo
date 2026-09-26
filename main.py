@@ -21,6 +21,7 @@ from schemas import (
     UserCreate,
     UserReplace,
     UserResponse,
+    UserRestore,
     UserUpdate,
 )
 
@@ -339,3 +340,24 @@ def delete_user(user_id: int, db: DbSession):
 
     user.deleted_at = datetime.now(UTC)
     db.commit()
+
+
+@app.post("/api/users/{user_id}/restore", response_model=UserResponse)
+def restore_user(user_id: int, restore_in: UserRestore, db: DbSession):
+    user = db.get(models.User, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+    if user.deleted_at is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user is not deleted")
+
+    username = restore_in.username or user.username
+    email = restore_in.email or user.email
+    check_username_email_available(db, username, email, exclude_user_id=user.id)
+
+    user.username = username
+    user.email = email
+    user.deleted_at = None
+
+    db.commit()
+    db.refresh(user)
+    return user

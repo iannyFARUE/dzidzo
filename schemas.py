@@ -42,6 +42,11 @@ class UserUpdate(BaseModel):
     avatar: str | None = Field(default=None, min_length=1, max_length=300)
 
 
+class UserRestore(BaseModel):
+    username: str | None = Field(default=None, min_length=1, max_length=50)
+    email: str | None = Field(default=None, min_length=1, max_length=120)
+
+
 class PostBase(BaseModel):
     title: str = Field(min_length=1, max_length=100)
     subtitle: str = Field(min_length=1, max_length=200)
