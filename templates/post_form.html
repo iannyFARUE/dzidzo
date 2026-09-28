@@ -1,17 +1,31 @@
 {% extends "layout.html" %} {% block content %}
-<form method="post" action="/write" novalidate>
-  <div class="sticky top-14 z-10 bg-white/90 backdrop-blur border-b border-gray-100">
-    <div class="max-w-3xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-      <span class="text-sm text-gray-400">New story</span>
+<div class="sticky top-14 z-10 bg-white/90 backdrop-blur border-b border-gray-100">
+  <div class="max-w-3xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
+    <span class="text-sm text-gray-400">{{ heading }}</span>
+    <div class="flex items-center gap-4">
+      {% if delete_action %}
+      <form
+        method="post"
+        action="{{ delete_action }}"
+        onsubmit="return confirm('Delete this story? This cannot be undone.');"
+      >
+        <button type="submit" class="text-sm font-medium text-red-600 hover:text-red-700">
+          Delete
+        </button>
+      </form>
+      {% endif %}
       <button
         type="submit"
+        form="post-form"
         class="bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-full px-5 py-1.5"
       >
-        Publish
+        {{ submit_label }}
       </button>
     </div>
   </div>
+</div>
 
+<form method="post" action="{{ form_action }}" id="post-form" novalidate>
   <div class="max-w-3xl mx-auto px-4 sm:px-6 py-10">
     {% if errors %}
     <div class="mb-8 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">

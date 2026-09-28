@@ -19,12 +19,35 @@
         </p>
       </div>
     </div>
+    {% if is_owner %}
+    <div class="flex items-center gap-2">
+      <a
+        href="/posts/{{ post.slug }}/edit"
+        class="shrink-0 text-sm font-semibold text-gray-700 hover:text-gray-900 rounded-full border border-gray-300 px-4 py-1.5"
+      >
+        Edit
+      </a>
+      <form
+        method="post"
+        action="/posts/{{ post.slug }}/delete"
+        onsubmit="return confirm('Delete this story? This cannot be undone.');"
+      >
+        <button
+          type="submit"
+          class="shrink-0 text-sm font-semibold text-red-600 hover:text-red-700 rounded-full border border-red-200 px-4 py-1.5"
+        >
+          Delete
+        </button>
+      </form>
+    </div>
+    {% else %}
     <button
       type="button"
       class="shrink-0 text-sm font-semibold text-white bg-gray-900 hover:bg-gray-800 rounded-full px-4 py-1.5"
     >
       Follow
     </button>
+    {% endif %}
   </div>
 
   <img src="{{ post.cover_image }}" alt="" class="w-full h-auto rounded mt-8" />
