@@ -1,18 +1,25 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 import models
+import schemas
 from database import get_db
+from routers.posts import get_or_create_tags, unique_slug
 from templating import templates
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 router = APIRouter()
 
 POST_RELATIONSHIPS = (selectinload(models.Post.author), selectinload(models.Post.tags))
+
+# TODO: replace with the authenticated user once auth is added.
+NEW_POST_AUTHOR_USERNAME = "juju"
 
 
 @router.get("/", include_in_schema=False, name="home")
@@ -75,4 +82,72 @@ async def user_posts(request: Request, username: str, db: DbSession):
         request,
         "user_posts.html",
         {"author": author, "posts": posts, "title": author.name},
+    )
+
+
+@router.get("/write", include_in_schema=False, name="new_post_form")
+async def new_post_form(request: Request):
+    return templates.TemplateResponse(request, "new_post.html", {"title": "Write a story"})
+
+
+@router.post("/write", include_in_schema=False, name="create_post_form")
+async def create_post_form(
+    request: Request,
+    db: DbSession,
+    title: Annotated[str, Form()] = "",
+    subtitle: Annotated[str, Form()] = "",
+    content: Annotated[str, Form()] = "",
+    cover_image: Annotated[str, Form()] = "",
+    tags: Annotated[str, Form()] = "",
+):
+    tag_names = [name.strip() for name in tags.split(",") if name.strip()]
+    values = {
+        "title": title,
+        "subtitle": subtitle,
+        "content": content,
+        "cover_image": cover_image,
+        "tags": ", ".join(tag_names),
+    }
+
+    try:
+        post_in = schemas.PostBase(
+            title=title,
+            subtitle=subtitle,
+            content=content,
+            cover_image=cover_image,
+            tags=tag_names,
+        )
+    except ValidationError as exc:
+        errors = {error["loc"][0]: error["msg"] for error in exc.errors()}
+        return templates.TemplateResponse(
+            request,
+            "new_post.html",
+            {"title": "Write a story", "errors": errors, "values": values},
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+
+    author = await db.scalar(
+        select(models.User).where(
+            models.User.username == NEW_POST_AUTHOR_USERNAME,
+            models.User.deleted_at.is_(None),
+        )
+    )
+    if author is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="default author not found")
+
+    post = models.Post(
+        slug=await unique_slug(db, post_in.title),
+        title=post_in.title,
+        subtitle=post_in.subtitle,
+        content=post_in.content,
+        cover_image=post_in.cover_image,
+        author=author,
+        tags=await get_or_create_tags(db, post_in.tags),
+        read_time_minutes=max(1, len(post_in.content.split()) // 200),
+    )
+    db.add(post)
+    await db.commit()
+
+    return RedirectResponse(
+        request.url_for("post_detail", slug=post.slug), status_code=status.HTTP_303_SEE_OTHER
     )

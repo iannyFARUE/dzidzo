@@ -1,3 +1,5 @@
+import re
+
 from schemas import (
     PostCreate,
     PostReplace,

@@ -1,0 +1,109 @@
+{% extends "layout.html" %} {% block content %}
+<form method="post" action="/write" novalidate>
+  <div class="sticky top-14 z-10 bg-white/90 backdrop-blur border-b border-gray-100">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
+      <span class="text-sm text-gray-400">New story</span>
+      <button
+        type="submit"
+        class="bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-full px-5 py-1.5"
+      >
+        Publish
+      </button>
+    </div>
+  </div>
+
+  <div class="max-w-3xl mx-auto px-4 sm:px-6 py-10">
+    {% if errors %}
+    <div class="mb-8 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+      Please fix the highlighted fields below.
+    </div>
+    {% endif %}
+
+    <textarea
+      name="title"
+      rows="1"
+      required
+      placeholder="Title"
+      oninput="autoGrow(this)"
+      class="js-autogrow block w-full resize-none overflow-hidden border-0 p-0 font-serif text-4xl sm:text-5xl font-bold text-gray-900 placeholder-gray-300 focus:outline-none focus:ring-0"
+    >{{ values.title if values else '' }}</textarea>
+    {% if errors and errors.title %}
+    <p class="mt-1 text-sm text-red-600">{{ errors.title }}</p>
+    {% endif %}
+
+    <textarea
+      name="subtitle"
+      rows="1"
+      required
+      placeholder="Write a subtitle..."
+      oninput="autoGrow(this)"
+      class="js-autogrow mt-3 block w-full resize-none overflow-hidden border-0 p-0 font-serif text-xl text-gray-500 placeholder-gray-300 focus:outline-none focus:ring-0"
+    >{{ values.subtitle if values else '' }}</textarea>
+    {% if errors and errors.subtitle %}
+    <p class="mt-1 text-sm text-red-600">{{ errors.subtitle }}</p>
+    {% endif %}
+
+    <textarea
+      name="content"
+      rows="1"
+      required
+      placeholder="Tell your story..."
+      oninput="autoGrow(this)"
+      class="js-autogrow mt-8 block w-full min-h-[40vh] resize-none overflow-hidden border-0 p-0 font-serif text-xl leading-relaxed text-gray-800 placeholder-gray-300 focus:outline-none focus:ring-0"
+    >{{ values.content if values else '' }}</textarea>
+    {% if errors and errors.content %}
+    <p class="mt-1 text-sm text-red-600">{{ errors.content }}</p>
+    {% endif %}
+
+    <details class="mt-10 border-t border-gray-100 pt-6" {% if errors and (errors.cover_image or errors.tags) %}open{% endif %}>
+      <summary class="cursor-pointer text-sm font-medium text-gray-500 hover:text-gray-800">
+        Add a cover image and topics
+      </summary>
+      <div class="mt-4 space-y-5">
+        <div>
+          <label for="cover_image" class="block text-xs font-medium text-gray-500 mb-1">
+            Cover image URL
+          </label>
+          <input
+            type="text"
+            id="cover_image"
+            name="cover_image"
+            value="{{ values.cover_image if values else '' }}"
+            placeholder="/media/example.jpg"
+            required
+            class="w-full border-0 border-b border-gray-200 bg-transparent py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-0"
+          />
+          {% if errors and errors.cover_image %}
+          <p class="mt-1 text-sm text-red-600">{{ errors.cover_image }}</p>
+          {% endif %}
+        </div>
+
+        <div>
+          <label for="tags" class="block text-xs font-medium text-gray-500 mb-1">
+            Topics (comma-separated, up to 10)
+          </label>
+          <input
+            type="text"
+            id="tags"
+            name="tags"
+            value="{{ values.tags if values else '' }}"
+            placeholder="python, fastapi"
+            class="w-full border-0 border-b border-gray-200 bg-transparent py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-0"
+          />
+          {% if errors and errors.tags %}
+          <p class="mt-1 text-sm text-red-600">{{ errors.tags }}</p>
+          {% endif %}
+        </div>
+      </div>
+    </details>
+  </div>
+</form>
+
+<script>
+  function autoGrow(el) {
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  }
+  document.querySelectorAll(".js-autogrow").forEach(autoGrow);
+</script>
+{% endblock content %}
