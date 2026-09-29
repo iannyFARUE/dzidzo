@@ -1,6 +1,12 @@
 from fastapi.security import OAuth2PasswordRequestForm
 
-from auth import CurrentUser, authenticate_user, create_access_token, hash_password
+from auth import (
+    CurrentUser,
+    authenticate_user,
+    create_access_token,
+    hash_password,
+    verify_password,
+)
 from schemas import (
     Token,
     UserCreate,
@@ -40,6 +46,11 @@ async def get_active_user(db: AsyncSession, user_id: int) -> models.User | None:
         return None
     return user
 
+
+def ensure_self(user_id: int, current_user: models.User) -> None:
+    if user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="cannot modify another user")
+
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(user_in: UserCreate, db: DbSession):
     await check_username_email_available(db, user_in.username, user_in.email)
@@ -78,10 +89,9 @@ async def get_user(user_id: int, db: DbSession):
     return user
 
 @router.patch("/{user_id}", response_model=UserResponse)
-async def update_user(user_id: int, user_in: UserUpdate, db: DbSession):
-    user = await get_active_user(db, user_id)
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+async def update_user(user_id: int, user_in: UserUpdate, db: DbSession, current_user: CurrentUser):
+    ensure_self(user_id, current_user)
+    user = current_user
 
     updates = user_in.model_dump(exclude_unset=True)
     await check_username_email_available(
@@ -99,10 +109,9 @@ async def update_user(user_id: int, user_in: UserUpdate, db: DbSession):
 
 
 @router.put("/{user_id}", response_model=UserResponse)
-async def replace_user(user_id: int, user_in: UserReplace, db: DbSession):
-    user = await get_active_user(db, user_id)
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+async def replace_user(user_id: int, user_in: UserReplace, db: DbSession, current_user: CurrentUser):
+    ensure_self(user_id, current_user)
+    user = current_user
 
     await check_username_email_available(db, user_in.username, user_in.email, exclude_user_id=user.id)
 
@@ -116,12 +125,9 @@ async def replace_user(user_id: int, user_in: UserReplace, db: DbSession):
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_user(user_id: int, db: DbSession):
-    user = await get_active_user(db, user_id)
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
-
-    user.deleted_at = datetime.now(UTC)
+async def delete_user(user_id: int, db: DbSession, current_user: CurrentUser):
+    ensure_self(user_id, current_user)
+    current_user.deleted_at = datetime.now(UTC)
     await db.commit()
 
 
@@ -130,6 +136,8 @@ async def restore_user(user_id: int, restore_in: UserRestore, db: DbSession):
     user = await db.get(models.User, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+    if not verify_password(restore_in.password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="incorrect password")
     if user.deleted_at is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user is not deleted")
 

@@ -11,7 +11,7 @@ class UserBase(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     email: str = Field(min_length=1, max_length=120)
     avatar: str = Field(
-        default="/static/profile_pics/default.jpg",
+        default="/media/profile_pics/default.jpg",
         min_length=1,
         max_length=300,
     )
@@ -43,6 +43,7 @@ class UserUpdate(BaseModel):
 
 
 class UserRestore(BaseModel):
+    password: str = Field(min_length=1)
     username: str | None = Field(default=None, min_length=1, max_length=50)
     email: str | None = Field(default=None, min_length=1, max_length=120)
 
@@ -79,7 +80,7 @@ class PostResponse(PostBase):
 
 
 class PostCreate(PostBase):
-    user_id: int = Field(gt=0)
+    pass
 
 
 class PostReplace(PostBase):

@@ -15,6 +15,8 @@ from sqlalchemy import select
 from datetime import UTC, datetime
 from sqlalchemy.orm import selectinload
 
+from auth import CurrentUser
+
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 router = APIRouter()
@@ -59,6 +61,15 @@ async def get_active_user(db: AsyncSession, user_id: int) -> models.User | None:
     return user
 
 
+async def get_owned_post(db: AsyncSession, post_id: int, user: models.User) -> models.Post:
+    post = await db.get(models.Post, post_id, options=list(POST_RELATIONSHIPS))
+    if post is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
+    if post.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="not the author of this post")
+    return post
+
+
 @router.get("", response_model=list[PostResponse])
 async def get_posts(db: DbSession):
     return (
@@ -79,18 +90,14 @@ async def get_post(post_id: int, db: DbSession):
 
 
 @router.post("/", response_model=PostResponse, status_code=status.HTTP_201_CREATED)
-async def create_post(post_in: PostCreate, db: DbSession):
-    author = await get_active_user(db, post_in.user_id)
-    if author is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
-
+async def create_post(post_in: PostCreate, db: DbSession, current_user: CurrentUser):
     post = models.Post(
         slug=await unique_slug(db, post_in.title),
         title=post_in.title,
         subtitle=post_in.subtitle,
         content=post_in.content,
         cover_image=post_in.cover_image,
-        author=author,
+        author=current_user,
         tags=await get_or_create_tags(db, post_in.tags),
         read_time_minutes=max(1, len(post_in.content.split()) // 200),
     )
@@ -100,10 +107,8 @@ async def create_post(post_in: PostCreate, db: DbSession):
 
 
 @router.patch("/{post_id}", response_model=PostResponse)
-async def update_post(post_id: int, post_in: PostUpdate, db: DbSession):
-    post = await db.get(models.Post, post_id, options=list(POST_RELATIONSHIPS))
-    if post is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
+async def update_post(post_id: int, post_in: PostUpdate, db: DbSession, current_user: CurrentUser):
+    post = await get_owned_post(db, post_id, current_user)
 
     updates = post_in.model_dump(exclude_unset=True)
 
@@ -125,10 +130,8 @@ async def update_post(post_id: int, post_in: PostUpdate, db: DbSession):
 
 
 @router.put("/{post_id}", response_model=PostResponse)
-async def replace_post(post_id: int, post_in: PostReplace, db: DbSession):
-    post = await db.get(models.Post, post_id, options=list(POST_RELATIONSHIPS))
-    if post is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
+async def replace_post(post_id: int, post_in: PostReplace, db: DbSession, current_user: CurrentUser):
+    post = await get_owned_post(db, post_id, current_user)
 
     post.title = post_in.title
     post.slug = await unique_slug(db, post_in.title, exclude_post_id=post.id)
@@ -143,10 +146,8 @@ async def replace_post(post_id: int, post_in: PostReplace, db: DbSession):
 
 
 @router.delete("/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_post(post_id: int, db: DbSession):
-    post = await db.get(models.Post, post_id)
-    if post is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
+async def delete_post(post_id: int, db: DbSession, current_user: CurrentUser):
+    post = await get_owned_post(db, post_id, current_user)
     await db.delete(post)
     await db.commit()
 
