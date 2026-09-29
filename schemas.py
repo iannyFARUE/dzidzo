@@ -18,7 +18,7 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    pass
+    password: str = Field(min_length=8, max_length=128)
 
 
 class UserResponse(UserBase):
@@ -45,6 +45,11 @@ class UserUpdate(BaseModel):
 class UserRestore(BaseModel):
     username: str | None = Field(default=None, min_length=1, max_length=50)
     email: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
 
 
 class PostBase(BaseModel):

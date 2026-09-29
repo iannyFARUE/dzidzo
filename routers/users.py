@@ -1,10 +1,13 @@
+from fastapi.security import OAuth2PasswordRequestForm
+
+from auth import CurrentUser, authenticate_user, create_access_token, hash_password
 from schemas import (
+    Token,
     UserCreate,
     UserReplace,
     UserResponse,
     UserRestore,
     UserUpdate,
-
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 import models
@@ -41,10 +44,30 @@ async def get_active_user(db: AsyncSession, user_id: int) -> models.User | None:
 async def create_user(user_in: UserCreate, db: DbSession):
     await check_username_email_available(db, user_in.username, user_in.email)
 
-    user = models.User(**user_in.model_dump())
+    user = models.User(
+        **user_in.model_dump(exclude={"password"}),
+        password_hash=hash_password(user_in.password),
+    )
     db.add(user)
     await db.commit()
     return user
+
+
+@router.post("/token", response_model=Token)
+async def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()], db: DbSession):
+    user = await authenticate_user(db, form_data.username, form_data.password)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return Token(access_token=create_access_token(user.id))
+
+
+@router.get("/me", response_model=UserResponse)
+async def read_me(current_user: CurrentUser):
+    return current_user
 
 
 @router.get("/{user_id}", response_model=UserResponse)
