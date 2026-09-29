@@ -28,12 +28,27 @@
             </svg>
             Write
           </a>
+          {% if current_user %}
           <button type="button" class="text-gray-600 hover:text-gray-900" aria-label="Notifications">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" class="w-5 h-5">
               <path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
             </svg>
           </button>
-          <img src="https://i.pravatar.cc/150?img=68" alt="Profile" class="w-8 h-8 rounded-full object-cover" />
+          <a href="/users/{{ current_user.username }}" title="{{ current_user.name }}">
+            <img src="{{ current_user.avatar }}" alt="{{ current_user.name }}" class="w-8 h-8 rounded-full object-cover" />
+          </a>
+          <form method="post" action="/logout">
+            <button type="submit" class="text-sm text-gray-600 hover:text-gray-900">Sign out</button>
+          </form>
+          {% else %}
+          <a href="/login" class="text-sm text-gray-600 hover:text-gray-900">Sign in</a>
+          <a
+            href="/register"
+            class="text-sm font-semibold text-white bg-gray-900 hover:bg-gray-800 rounded-full px-4 py-1.5"
+          >
+            Get started
+          </a>
+          {% endif %}
         </div>
       </div>
     </header>
