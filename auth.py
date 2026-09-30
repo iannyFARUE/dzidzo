@@ -38,11 +38,11 @@ def create_access_token(user_id: int) -> str:
 
 
 async def authenticate_user(db: AsyncSession, identifier: str, password: str) -> models.User | None:
+    # Usernames can't contain "@", so the identifier matches exactly one column and
+    # a username can never shadow another user's email.
+    column = models.User.email if "@" in identifier else models.User.username
     user = await db.scalar(
-        select(models.User).where(
-            models.User.deleted_at.is_(None),
-            (models.User.username == identifier) | (models.User.email == identifier),
-        )
+        select(models.User).where(models.User.deleted_at.is_(None), column == identifier)
     )
     if user is None:
         verify_password(password, DUMMY_HASH)

@@ -5,11 +5,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 TagName = Annotated[str, Field(min_length=1, max_length=30)]
 
+# "@" is reserved for emails so a username can never collide with someone's login email.
+USERNAME_PATTERN = r"^[^@]+$"
+EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+$"
+
 
 class UserBase(BaseModel):
-    username: str = Field(min_length=1, max_length=50)
+    username: str = Field(min_length=1, max_length=50, pattern=USERNAME_PATTERN)
     name: str = Field(min_length=1, max_length=100)
-    email: str = Field(min_length=1, max_length=120)
+    email: str = Field(min_length=1, max_length=120, pattern=EMAIL_PATTERN)
     avatar: str = Field(
         default="/media/profile_pics/default.jpg",
         min_length=1,
@@ -39,16 +43,16 @@ class UserReplace(UserBase):
 
 
 class UserUpdate(BaseModel):
-    username: str | None = Field(default=None, min_length=1, max_length=50)
+    username: str | None = Field(default=None, min_length=1, max_length=50, pattern=USERNAME_PATTERN)
     name: str | None = Field(default=None, min_length=1, max_length=100)
-    email: str | None = Field(default=None, min_length=1, max_length=120)
+    email: str | None = Field(default=None, min_length=1, max_length=120, pattern=EMAIL_PATTERN)
     avatar: str | None = Field(default=None, min_length=1, max_length=300)
 
 
 class UserRestore(BaseModel):
     password: str = Field(min_length=1)
-    username: str | None = Field(default=None, min_length=1, max_length=50)
-    email: str | None = Field(default=None, min_length=1, max_length=120)
+    username: str | None = Field(default=None, min_length=1, max_length=50, pattern=USERNAME_PATTERN)
+    email: str | None = Field(default=None, min_length=1, max_length=120, pattern=EMAIL_PATTERN)
 
 
 class Token(BaseModel):

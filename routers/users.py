@@ -1,6 +1,7 @@
 from fastapi.security import OAuth2PasswordRequestForm
 
 from auth import (
+    DUMMY_HASH,
     CurrentUser,
     authenticate_user,
     create_access_token,
@@ -134,13 +135,15 @@ async def delete_user(user_id: int, db: DbSession, current_user: CurrentUser):
 
 @router.post("/{user_id}/restore", response_model=UserPrivate)
 async def restore_user(user_id: int, restore_in: UserRestore, db: DbSession):
+    # Missing, active and wrong-password cases all fail identically (and take the same
+    # time), so this endpoint can't be used to probe accounts or test passwords.
     user = await db.get(models.User, user_id)
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
-    if not verify_password(restore_in.password, user.password_hash):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="incorrect password")
-    if user.deleted_at is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user is not deleted")
+    password_ok = verify_password(restore_in.password, user.password_hash if user else DUMMY_HASH)
+    if user is None or user.deleted_at is None or not password_ok:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid credentials or account cannot be restored",
+        )
 
     username = restore_in.username or user.username
     email = restore_in.email or user.email
