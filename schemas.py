@@ -21,14 +21,17 @@ class UserCreate(UserBase):
     password: str = Field(min_length=8, max_length=128)
 
 
-class UserResponse(UserBase):
+class UserPublic(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: int = Field(gt=0)
+    id: int
+    username: str
+    name: str
+    avatar: str
 
 
-class Author(UserResponse):
-    pass
+class UserPrivate(UserPublic):
+    email: str
 
 
 class UserReplace(UserBase):
@@ -66,7 +69,7 @@ class PostResponse(PostBase):
 
     id: int = Field(gt=0)
     slug: str = Field(min_length=1, max_length=150)
-    author: Author
+    author: UserPublic
     claps: int = Field(ge=0)
     comments_count: int = Field(ge=0)
     read_time_minutes: int = Field(ge=1)

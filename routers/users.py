@@ -10,8 +10,9 @@ from auth import (
 from schemas import (
     Token,
     UserCreate,
+    UserPrivate,
+    UserPublic,
     UserReplace,
-    UserResponse,
     UserRestore,
     UserUpdate,
 )
@@ -51,7 +52,7 @@ def ensure_self(user_id: int, current_user: models.User) -> None:
     if user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="cannot modify another user")
 
-@router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=UserPrivate, status_code=status.HTTP_201_CREATED)
 async def create_user(user_in: UserCreate, db: DbSession):
     await check_username_email_available(db, user_in.username, user_in.email)
 
@@ -76,19 +77,19 @@ async def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()], db: 
     return Token(access_token=create_access_token(user.id))
 
 
-@router.get("/me", response_model=UserResponse)
+@router.get("/me", response_model=UserPrivate)
 async def read_me(current_user: CurrentUser):
     return current_user
 
 
-@router.get("/{user_id}", response_model=UserResponse)
+@router.get("/{user_id}", response_model=UserPublic)
 async def get_user(user_id: int, db: DbSession):
     user = await get_active_user(db, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
     return user
 
-@router.patch("/{user_id}", response_model=UserResponse)
+@router.patch("/{user_id}", response_model=UserPrivate)
 async def update_user(user_id: int, user_in: UserUpdate, db: DbSession, current_user: CurrentUser):
     ensure_self(user_id, current_user)
     user = current_user
@@ -108,7 +109,7 @@ async def update_user(user_id: int, user_in: UserUpdate, db: DbSession, current_
     return user
 
 
-@router.put("/{user_id}", response_model=UserResponse)
+@router.put("/{user_id}", response_model=UserPrivate)
 async def replace_user(user_id: int, user_in: UserReplace, db: DbSession, current_user: CurrentUser):
     ensure_self(user_id, current_user)
     user = current_user
@@ -131,7 +132,7 @@ async def delete_user(user_id: int, db: DbSession, current_user: CurrentUser):
     await db.commit()
 
 
-@router.post("/{user_id}/restore", response_model=UserResponse)
+@router.post("/{user_id}/restore", response_model=UserPrivate)
 async def restore_user(user_id: int, restore_in: UserRestore, db: DbSession):
     user = await db.get(models.User, user_id)
     if user is None:
