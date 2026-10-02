@@ -3,7 +3,7 @@ from uuid import uuid4
 
 from fastapi import UploadFile
 from fastapi.concurrency import run_in_threadpool
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageOps, ImageSequence, UnidentifiedImageError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import models
@@ -13,6 +13,7 @@ from storage import Storage
 DEFAULT_AVATAR = "/media/profile_pics/default.jpg"
 AVATAR_SIZE = 256
 ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP", "GIF"}
+MAX_FRAMES = 200
 
 # Reject decompression bombs: a tiny file that expands to an enormous bitmap.
 Image.MAX_IMAGE_PIXELS = 40_000_000
@@ -22,20 +23,37 @@ class AvatarError(ValueError):
     """The upload isn't an acceptable image. The message is safe to show to the user."""
 
 
+def _square(image: Image.Image) -> Image.Image:
+    # RGBA keeps transparency from PNG/GIF/WebP; WebP output supports alpha.
+    return ImageOps.fit(image.convert("RGBA"), (AVATAR_SIZE, AVATAR_SIZE), Image.Resampling.LANCZOS)
+
+
 def _process(data: bytes) -> bytes:
     # Re-encoding (rather than storing the upload as-is) strips EXIF/GPS metadata and
     # anything smuggled alongside the pixels, and guarantees the file really is an image.
+    out = io.BytesIO()
     try:
         with Image.open(io.BytesIO(data)) as image:
             if image.format not in ALLOWED_FORMATS:
                 raise AvatarError("Please upload a JPEG, PNG, WebP or GIF image.")
-            image = ImageOps.exif_transpose(image)
-            image = ImageOps.fit(image.convert("RGB"), (AVATAR_SIZE, AVATAR_SIZE), Image.Resampling.LANCZOS)
+
+            if getattr(image, "is_animated", False):
+                # Cap frames so a small file can't make us resize thousands of images.
+                if image.n_frames > MAX_FRAMES:
+                    raise AvatarError(f"Animated images can have at most {MAX_FRAMES} frames.")
+                frames, durations = [], []
+                for frame in ImageSequence.Iterator(image):
+                    frames.append(_square(frame))
+                    # Browsers treat 0 ms GIF frames as ~100 ms; WebP would play them instantly.
+                    durations.append(frame.info.get("duration") or 100)
+                frames[0].save(
+                    out, format="WEBP", quality=85, save_all=True, append_images=frames[1:],
+                    duration=durations, loop=image.info.get("loop", 0),
+                )
+            else:
+                _square(ImageOps.exif_transpose(image)).save(out, format="WEBP", quality=85)
     except (UnidentifiedImageError, Image.DecompressionBombError, OSError) as exc:
         raise AvatarError("That file isn't a valid image.") from exc
-
-    out = io.BytesIO()
-    image.save(out, format="WEBP", quality=85)
     return out.getvalue()
 
 
