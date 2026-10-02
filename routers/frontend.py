@@ -1,12 +1,13 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import RedirectResponse
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+import avatars
 import models
 import schemas
 from auth import (
@@ -21,9 +22,11 @@ from config import settings
 from database import get_db
 from routers.posts import get_or_create_tags, unique_slug
 from routers.users import check_username_email_available
+from storage import Storage, get_storage
 from templating import templates
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
+StorageDep = Annotated[Storage, Depends(get_storage)]
 router = APIRouter(dependencies=[Depends(get_optional_user)])
 
 POST_RELATIONSHIPS = (selectinload(models.Post.author), selectinload(models.Post.tags))
@@ -223,8 +226,7 @@ async def register(
             name=name.strip(), username=username.strip(), email=email.strip(), password=password
         )
     except ValidationError as exc:
-        errors = {error["loc"][0]: error["msg"] for error in exc.errors()}
-        return render_errors(errors, status.HTTP_422_UNPROCESSABLE_CONTENT)
+        return render_errors(form_errors(exc), status.HTTP_422_UNPROCESSABLE_CONTENT)
 
     try:
         await check_username_email_available(db, user_in.username, user_in.email)
@@ -244,6 +246,119 @@ async def register(
     response = RedirectResponse(safe_next(next), status_code=status.HTTP_303_SEE_OTHER)
     set_auth_cookie(request, response, user)
     return response
+
+
+PROFILE_NOTICES = {
+    "details": "Your profile has been updated.",
+    "avatar": "Your profile photo has been updated.",
+    "avatar_removed": "Your profile photo has been removed.",
+}
+
+
+def render_profile(
+    request: Request,
+    user: models.User,
+    *,
+    values: dict | None = None,
+    errors: dict | None = None,
+    notice: str | None = None,
+    status_code: int = status.HTTP_200_OK,
+):
+    return templates.TemplateResponse(
+        request,
+        "profile.html",
+        {
+            "title": "Your profile",
+            "user": user,
+            "values": values or {"name": user.name, "username": user.username, "email": user.email},
+            "errors": errors or {},
+            "notice": notice,
+            "is_default_avatar": user.avatar == avatars.DEFAULT_AVATAR,
+            "max_avatar_mb": settings.max_avatar_bytes // (1024 * 1024),
+        },
+        status_code=status_code,
+    )
+
+
+def profile_redirect(request: Request, saved: str) -> RedirectResponse:
+    url = request.url_for("profile").include_query_params(saved=saved)
+    return RedirectResponse(url, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/profile", include_in_schema=False, name="profile")
+async def profile(request: Request, current_user: OptionalUser, saved: str | None = None):
+    if current_user is None:
+        return login_redirect(request)
+    return render_profile(request, current_user, notice=PROFILE_NOTICES.get(saved or ""))
+
+
+@router.post("/profile", include_in_schema=False, name="update_profile")
+async def update_profile(
+    request: Request,
+    db: DbSession,
+    current_user: OptionalUser,
+    name: Annotated[str, Form()] = "",
+    username: Annotated[str, Form()] = "",
+    email: Annotated[str, Form()] = "",
+):
+    if current_user is None:
+        return login_redirect(request)
+
+    values = {"name": name, "username": username, "email": email}
+    try:
+        user_in = schemas.UserUpdate(name=name.strip(), username=username.strip(), email=email.strip())
+    except ValidationError as exc:
+        return render_profile(
+            request, current_user, values=values, errors=form_errors(exc),
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+
+    try:
+        await check_username_email_available(
+            db, user_in.username, user_in.email, exclude_user_id=current_user.id
+        )
+    except HTTPException:
+        return render_profile(
+            request, current_user, values=values,
+            errors={"details": "That username or email is already registered."},
+            status_code=status.HTTP_409_CONFLICT,
+        )
+
+    current_user.name = user_in.name
+    current_user.username = user_in.username
+    current_user.email = user_in.email
+    await db.commit()
+    return profile_redirect(request, "details")
+
+
+@router.post("/profile/avatar", include_in_schema=False, name="update_avatar")
+async def update_avatar(
+    request: Request,
+    db: DbSession,
+    storage: StorageDep,
+    current_user: OptionalUser,
+    avatar: Annotated[UploadFile | None, File()] = None,
+):
+    if current_user is None:
+        return login_redirect(request, next_path="/profile")
+    try:
+        if avatar is None:
+            raise avatars.AvatarError("Please choose an image to upload.")
+        await avatars.set_avatar(db, storage, current_user, avatar)
+    except avatars.AvatarError as exc:
+        return render_profile(
+            request, current_user, errors={"avatar": str(exc)},
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+    return profile_redirect(request, "avatar")
+
+
+@router.post("/profile/avatar/delete", include_in_schema=False, name="remove_avatar")
+async def remove_avatar(request: Request, db: DbSession, storage: StorageDep, current_user: OptionalUser):
+    if current_user is None:
+        return login_redirect(request, next_path="/profile")
+    await avatars.reset_avatar(db, storage, current_user)
+    return profile_redirect(request, "avatar_removed")
 
 
 @router.post("/logout", include_in_schema=False, name="logout")

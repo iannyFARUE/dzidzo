@@ -47,6 +47,9 @@ Thumbs.db
 # Logs
 *.log
 
+# User uploads (the bundled default avatars stay tracked)
+media/profile_pics/*.webp
+
 # Node / Tailwind CLI
 node_modules/
 static/dist/
