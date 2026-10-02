@@ -26,7 +26,7 @@ class User(Base):
     avatar: Mapped[str] = mapped_column(
         String(300),
         nullable=False,
-        default="/media/profile_pics/default.jpg",
+        default="/media/profile_pics/default.jpg",  # keep in sync with avatars.DEFAULT_AVATAR
     )
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),

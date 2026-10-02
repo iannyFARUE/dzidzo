@@ -36,6 +36,23 @@ def safe_next(next_url: str | None) -> str:
     return "/"
 
 
+PATTERN_MESSAGES = {
+    "username": "Usernames can't contain @.",
+    "email": "Enter a valid email address.",
+}
+
+
+def form_errors(exc: ValidationError) -> dict[str, str]:
+    errors = {}
+    for error in exc.errors():
+        field = error["loc"][0]
+        if error["type"] == "string_pattern_mismatch" and field in PATTERN_MESSAGES:
+            errors[field] = PATTERN_MESSAGES[field]
+        else:
+            errors[field] = error["msg"]
+    return errors
+
+
 def login_redirect(request: Request, next_path: str | None = None) -> RedirectResponse:
     url = request.url_for("login_form").include_query_params(next=next_path or request.url.path)
     return RedirectResponse(url, status_code=status.HTTP_303_SEE_OTHER)

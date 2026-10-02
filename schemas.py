@@ -14,11 +14,8 @@ class UserBase(BaseModel):
     username: str = Field(min_length=1, max_length=50, pattern=USERNAME_PATTERN)
     name: str = Field(min_length=1, max_length=100)
     email: str = Field(min_length=1, max_length=120, pattern=EMAIL_PATTERN)
-    avatar: str = Field(
-        default="/media/profile_pics/default.jpg",
-        min_length=1,
-        max_length=300,
-    )
+    # avatar is deliberately absent: it's only ever set by the upload endpoints, so a
+    # client can't point it at a file that belongs to someone else.
 
 
 class UserCreate(UserBase):
@@ -46,7 +43,6 @@ class UserUpdate(BaseModel):
     username: str | None = Field(default=None, min_length=1, max_length=50, pattern=USERNAME_PATTERN)
     name: str | None = Field(default=None, min_length=1, max_length=100)
     email: str | None = Field(default=None, min_length=1, max_length=120, pattern=EMAIL_PATTERN)
-    avatar: str | None = Field(default=None, min_length=1, max_length=300)
 
 
 class UserRestore(BaseModel):

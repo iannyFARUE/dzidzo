@@ -18,12 +18,15 @@ from schemas import (
     UserUpdate,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
+import avatars
 import models
-from fastapi import Depends, FastAPI, Request, HTTPException, status, APIRouter
+from fastapi import Depends, FastAPI, Request, HTTPException, UploadFile, status, APIRouter
 from typing import Annotated
 from database import get_db
 from sqlalchemy import select
+from storage import Storage, get_storage
 DbSession = Annotated[AsyncSession, Depends(get_db)]
+StorageDep = Annotated[Storage, Depends(get_storage)]
 router = APIRouter()
 from datetime import UTC, datetime
 
@@ -83,6 +86,21 @@ async def read_me(current_user: CurrentUser):
     return current_user
 
 
+@router.put("/me/avatar", response_model=UserPrivate)
+async def upload_avatar(file: UploadFile, db: DbSession, storage: StorageDep, current_user: CurrentUser):
+    try:
+        await avatars.set_avatar(db, storage, current_user, file)
+    except avatars.AvatarError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc))
+    return current_user
+
+
+@router.delete("/me/avatar", response_model=UserPrivate)
+async def remove_avatar(db: DbSession, storage: StorageDep, current_user: CurrentUser):
+    await avatars.reset_avatar(db, storage, current_user)
+    return current_user
+
+
 @router.get("/{user_id}", response_model=UserPublic)
 async def get_user(user_id: int, db: DbSession):
     user = await get_active_user(db, user_id)
@@ -120,7 +138,6 @@ async def replace_user(user_id: int, user_in: UserReplace, db: DbSession, curren
     user.username = user_in.username
     user.name = user_in.name
     user.email = user_in.email
-    user.avatar = user_in.avatar
 
     await db.commit()
     return user
