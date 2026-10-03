@@ -51,6 +51,19 @@ class UserRestore(BaseModel):
     email: str | None = Field(default=None, min_length=1, max_length=120, pattern=EMAIL_PATTERN)
 
 
+class PasswordForgot(BaseModel):
+    email: str = Field(min_length=1, max_length=120, pattern=EMAIL_PATTERN)
+
+
+class PasswordReset(BaseModel):
+    token: str = Field(min_length=1)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class Message(BaseModel):
+    detail: str
+
+
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"

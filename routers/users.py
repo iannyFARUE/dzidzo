@@ -5,10 +5,15 @@ from auth import (
     CurrentUser,
     authenticate_user,
     create_access_token,
+    create_password_reset_token,
+    get_user_from_reset_token,
     hash_password,
     verify_password,
 )
 from schemas import (
+    Message,
+    PasswordForgot,
+    PasswordReset,
     Token,
     UserCreate,
     UserPrivate,
@@ -19,8 +24,9 @@ from schemas import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 import avatars
+import mail
 import models
-from fastapi import Depends, FastAPI, Request, HTTPException, UploadFile, status, APIRouter
+from fastapi import BackgroundTasks, Depends, FastAPI, Request, HTTPException, UploadFile, status, APIRouter
 from typing import Annotated
 from database import get_db
 from sqlalchemy import select
@@ -52,6 +58,30 @@ async def get_active_user(db: AsyncSession, user_id: int) -> models.User | None:
     return user
 
 
+FORGOT_PASSWORD_MESSAGE = "If an account uses that email, a password reset link is on its way."
+
+
+async def request_password_reset(db: AsyncSession, background_tasks: BackgroundTasks, email: str) -> None:
+    # Callers respond the same whether or not the account exists, and the email goes out
+    # after the response, so neither the reply nor its timing reveals who has an account.
+    user = await db.scalar(
+        select(models.User).where(models.User.deleted_at.is_(None), models.User.email == email)
+    )
+    if user is not None:
+        background_tasks.add_task(
+            mail.send_password_reset_email, user.email, user.name, create_password_reset_token(user)
+        )
+
+
+async def reset_password(db: AsyncSession, token: str, new_password: str) -> models.User | None:
+    user = await get_user_from_reset_token(db, token)
+    if user is None:
+        return None
+    user.password_hash = hash_password(new_password)
+    await db.commit()
+    return user
+
+
 def ensure_self(user_id: int, current_user: models.User) -> None:
     if user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="cannot modify another user")
@@ -79,6 +109,22 @@ async def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()], db: 
             headers={"WWW-Authenticate": "Bearer"},
         )
     return Token(access_token=create_access_token(user.id))
+
+
+@router.post("/forgot-password", response_model=Message, status_code=status.HTTP_202_ACCEPTED)
+async def forgot_password(body: PasswordForgot, db: DbSession, background_tasks: BackgroundTasks):
+    await request_password_reset(db, background_tasks, body.email)
+    return Message(detail=FORGOT_PASSWORD_MESSAGE)
+
+
+@router.post("/reset-password", response_model=Message)
+async def reset_password_endpoint(body: PasswordReset, db: DbSession):
+    if await reset_password(db, body.token, body.new_password) is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="reset link is invalid or has expired",
+        )
+    return Message(detail="password has been reset")
 
 
 @router.get("/me", response_model=UserPrivate)

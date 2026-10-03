@@ -4,7 +4,7 @@ A Medium-style blogging platform built with FastAPI. People can sign up, write s
 
 ## Features
 
-- **Accounts**: register, log in with a username or email, soft-delete an account and restore it later
+- **Accounts**: register, log in with a username or email, reset a forgotten password by email, soft-delete an account and restore it later
 - **Profiles**: edit your name, username and email, and upload a profile photo (animated GIFs stay animated)
 - **Stories**: create, edit and delete posts, with automatic slugs, tags and read-time estimates
 - **Two front ends on one backend**:
@@ -16,6 +16,7 @@ A Medium-style blogging platform built with FastAPI. People can sign up, write s
   - Only a post's author can change it, and only a user can change their own account
   - Email addresses are only returned to their owner
   - `?next=` redirects only go to pages on this site
+  - Password reset never reveals whether an email has an account, and reset links work only once
 
 ## Tech stack
 
@@ -62,6 +63,24 @@ python -c "import secrets; print(secrets.token_hex(32))"   # paste the output in
 | `MEDIA_ROOT` | `media` | Folder where uploaded files are stored |
 | `MEDIA_URL` | `/media` | URL path that serves `MEDIA_ROOT` |
 | `MAX_AVATAR_BYTES` | `5242880` (5 MB) | Largest profile photo upload allowed |
+| `APP_BASE_URL` | `http://127.0.0.1:8000` | Public address of the site, used to build links in emails |
+| `PASSWORD_RESET_EXPIRE_MINUTES` | `30` | How long a password reset link stays valid |
+| `SMTP_HOST` | `sandbox.smtp.mailtrap.io` | SMTP server |
+| `SMTP_PORT` | `2525` | SMTP port |
+| `SMTP_USERNAME` | *(empty)* | SMTP username. If empty, emails are printed to the console instead of sent. |
+| `SMTP_PASSWORD` | *(empty)* | SMTP password |
+| `SMTP_STARTTLS` | `true` | Upgrade the connection with STARTTLS |
+| `MAIL_FROM` | `Dzidzo <no-reply@dzidzo.local>` | Sender address on outgoing email |
+
+#### Email in development (Mailtrap)
+
+Development email goes to a [Mailtrap](https://mailtrap.io) sandbox inbox, which catches every message so nothing reaches a real inbox.
+
+1. Sign up and open **Email Testing → Inboxes → My Inbox**.
+2. Under **SMTP Settings**, copy the username and password into `SMTP_USERNAME` and `SMTP_PASSWORD` in `.env`. The host and port defaults already point at the sandbox.
+3. Restart the server. Emails such as password reset links now show up in that Mailtrap inbox.
+
+If you skip this, emails are printed to the server console, which also works for local testing.
 
 ### 3. Build the CSS
 
@@ -95,6 +114,7 @@ The SQLite database (`blog.db`) and its tables are created automatically on firs
 ├── models.py          # SQLAlchemy models: User, Post, Tag
 ├── schemas.py         # Pydantic request/response schemas
 ├── auth.py            # Password hashing, JWT creation/validation, current-user dependencies
+├── mail.py            # SMTP email sending (Mailtrap in dev)
 ├── avatars.py         # Profile photo validation, resizing and replacement
 ├── storage.py         # File storage interface + local-disk implementation
 ├── errors.py          # JSON errors for /api, HTML error page for everything else
@@ -116,6 +136,8 @@ The SQLite database (`blog.db`) and its tables are created automatically on firs
 | `/posts/{slug}` | Read a story | |
 | `/users/{username}` | An author's stories | |
 | `/login`, `/register` | Sign in / create an account | |
+| `/forgot-password` | Request a password reset email | |
+| `/reset-password?token=…` | Choose a new password (link from the email) | |
 | `/write` | Write a new story | ✓ |
 | `/posts/{slug}/edit` | Edit or delete your story | ✓ (author only) |
 | `/profile` | Your details and profile photo (click your avatar in the header) | ✓ |
@@ -142,6 +164,8 @@ curl -X POST http://127.0.0.1:8000/api/users/token \
 | --- | --- | --- | --- |
 | POST | `/` | Register | |
 | POST | `/token` | Log in and get an access token | |
+| POST | `/forgot-password` | Email a password reset link (`{"email": ...}`). Always returns 202. | |
+| POST | `/reset-password` | Set a new password (`{"token": ..., "new_password": ...}`) | |
 | GET | `/me` | Your own profile, including your email | ✓ |
 | PUT | `/me/avatar` | Upload a profile photo (multipart field `file`) | ✓ |
 | DELETE | `/me/avatar` | Reset your profile photo to the default | ✓ |
@@ -218,6 +242,14 @@ curl -X PUT http://127.0.0.1:8000/api/users/me/avatar \
   - [storage.py](storage.py) defines a `Storage` interface with two methods: `save(key, data, content_type)`, which returns the file's public URL, and `delete(url)`.
   - `LocalStorage` writes files to `MEDIA_ROOT`.
   - To use S3, write a class with those two methods and return it from `get_storage()`. No other code needs to change.
+
+## Password reset
+
+- **Requesting a link:** `/forgot-password` returns the same message whether or not the email has an account. The email is sent after the response, so response times don't give it away either.
+- **The link:** contains a signed token that expires after `PASSWORD_RESET_EXPIRE_MINUTES`. It is built from `APP_BASE_URL`, not the request's `Host` header, so a forged header can't point reset links at another site.
+- **Single use:** the token carries a fingerprint of the current password hash. Once the password changes, every earlier reset link stops working. Nothing extra is stored in the database.
+- **Kept separate from login tokens:** reset tokens have their own JWT audience, so a reset token can't be used as an access token, and an access token can't be used to reset a password.
+- **Existing sessions:** resetting a password doesn't log out existing sessions. Those tokens stay valid until they expire (see below).
 
 ## Notes
 

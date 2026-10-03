@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import RedirectResponse
 from pydantic import ValidationError
 from sqlalchemy import func, select
@@ -16,13 +16,19 @@ from auth import (
     authenticate_user,
     create_access_token,
     get_optional_user,
+    get_user_from_reset_token,
     hash_password,
 )
 from config import settings
 from database import get_db
 from pagination import PageParams, PageResult, Pagination, paginate
 from routers.posts import NEWEST_FIRST, get_or_create_tags, unique_slug
-from routers.users import check_username_email_available
+from routers.users import (
+    FORGOT_PASSWORD_MESSAGE,
+    check_username_email_available,
+    request_password_reset,
+    reset_password,
+)
 from storage import Storage, get_storage
 from templating import templates
 
@@ -167,11 +173,12 @@ async def user_posts(request: Request, username: str, db: DbSession, params: Pag
 
 
 @router.get("/login", include_in_schema=False, name="login_form")
-async def login_form(request: Request, current_user: OptionalUser, next: str = "/"):
+async def login_form(request: Request, current_user: OptionalUser, next: str = "/", reset: bool = False):
     if current_user is not None:
         return RedirectResponse(safe_next(next), status_code=status.HTTP_303_SEE_OTHER)
+    notice = "Your password has been reset. Sign in with your new password." if reset else None
     return templates.TemplateResponse(
-        request, "login.html", {"title": "Sign in", "next": safe_next(next)}
+        request, "login.html", {"title": "Sign in", "next": safe_next(next), "notice": notice}
     )
 
 
@@ -261,6 +268,86 @@ async def register(
     response = RedirectResponse(safe_next(next), status_code=status.HTTP_303_SEE_OTHER)
     set_auth_cookie(request, response, user)
     return response
+
+
+@router.get("/forgot-password", include_in_schema=False, name="forgot_password_form")
+async def forgot_password_form(request: Request):
+    return templates.TemplateResponse(request, "forgot_password.html", {"title": "Reset your password"})
+
+
+@router.post("/forgot-password", include_in_schema=False, name="forgot_password")
+async def forgot_password(
+    request: Request,
+    db: DbSession,
+    background_tasks: BackgroundTasks,
+    email: Annotated[str, Form()] = "",
+):
+    try:
+        form = schemas.PasswordForgot(email=email.strip())
+    except ValidationError as exc:
+        return templates.TemplateResponse(
+            request,
+            "forgot_password.html",
+            {"title": "Reset your password", "email": email, "errors": form_errors(exc)},
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+    await request_password_reset(db, background_tasks, form.email)
+    return templates.TemplateResponse(
+        request,
+        "forgot_password.html",
+        {"title": "Reset your password", "sent": True, "notice": FORGOT_PASSWORD_MESSAGE},
+    )
+
+
+def render_reset_password(request: Request, token: str, *, errors: dict | None = None, status_code: int = 200):
+    return templates.TemplateResponse(
+        request,
+        "reset_password.html",
+        {"title": "Choose a new password", "token": token, "errors": errors or {}},
+        status_code=status_code,
+    )
+
+
+INVALID_RESET_LINK = {"token": "This reset link is invalid or has expired. Please request a new one."}
+
+
+@router.get("/reset-password", include_in_schema=False, name="reset_password_form")
+async def reset_password_form(request: Request, db: DbSession, token: str = ""):
+    # Check up front so people don't type a new password only to find the link is dead.
+    if not token or await get_user_from_reset_token(db, token) is None:
+        return render_reset_password(request, "", errors=INVALID_RESET_LINK, status_code=status.HTTP_400_BAD_REQUEST)
+    return render_reset_password(request, token)
+
+
+@router.post("/reset-password", include_in_schema=False, name="reset_password")
+async def reset_password_submit(
+    request: Request,
+    db: DbSession,
+    token: Annotated[str, Form()] = "",
+    password: Annotated[str, Form()] = "",
+    confirm_password: Annotated[str, Form()] = "",
+):
+    try:
+        form = schemas.PasswordReset(token=token, new_password=password)
+    except ValidationError as exc:
+        errors = form_errors(exc)
+        if "new_password" in errors:
+            errors["password"] = errors.pop("new_password")
+        if "token" in errors:
+            errors.update(INVALID_RESET_LINK)
+        return render_reset_password(request, token, errors=errors, status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
+
+    if password != confirm_password:
+        return render_reset_password(
+            request, token, errors={"confirm_password": "Passwords don't match."},
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+
+    if await reset_password(db, form.token, form.new_password) is None:
+        return render_reset_password(request, "", errors=INVALID_RESET_LINK, status_code=status.HTTP_400_BAD_REQUEST)
+
+    url = request.url_for("login_form").include_query_params(reset=1)
+    return RedirectResponse(url, status_code=status.HTTP_303_SEE_OTHER)
 
 
 PROFILE_NOTICES = {

@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
@@ -22,6 +24,11 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/users/token")
 
 ACCESS_TOKEN_COOKIE = "access_token"
 
+# Reset tokens carry this audience. jwt.decode rejects a token that has an "aud" claim
+# unless the caller asks for that audience, so a reset token can never be used as an
+# access token, and the reset decoder below won't accept an access token either.
+PASSWORD_RESET_AUDIENCE = "password-reset"
+
 
 def hash_password(password: str) -> str:
     return password_hasher.hash(password)
@@ -35,6 +42,44 @@ def create_access_token(user_id: int) -> str:
     expire = datetime.now(UTC) + timedelta(minutes=settings.access_token_expire_minutes)
     payload = {"sub": str(user_id), "exp": expire}
     return jwt.encode(payload, settings.secret_key.get_secret_value(), algorithm=settings.algorithm)
+
+
+def _password_fingerprint(user: models.User) -> str:
+    # Argon2 hashes are salted, so this changes on every password change. Embedding it in
+    # a reset token makes the token single-use without storing anything in the database.
+    return hashlib.sha256(user.password_hash.encode()).hexdigest()[:16]
+
+
+def create_password_reset_token(user: models.User) -> str:
+    expire = datetime.now(UTC) + timedelta(minutes=settings.password_reset_expire_minutes)
+    payload = {
+        "sub": str(user.id),
+        "aud": PASSWORD_RESET_AUDIENCE,
+        "exp": expire,
+        "pwd": _password_fingerprint(user),
+    }
+    return jwt.encode(payload, settings.secret_key.get_secret_value(), algorithm=settings.algorithm)
+
+
+async def get_user_from_reset_token(db: AsyncSession, token: str) -> models.User | None:
+    try:
+        payload = jwt.decode(
+            token,
+            settings.secret_key.get_secret_value(),
+            algorithms=[settings.algorithm],
+            audience=PASSWORD_RESET_AUDIENCE,
+            options={"require": ["exp", "sub", "aud", "pwd"]},
+        )
+        user_id = int(payload["sub"])
+    except (jwt.InvalidTokenError, ValueError):
+        return None
+
+    user = await db.get(models.User, user_id)
+    if user is None or user.deleted_at is not None:
+        return None
+    if not hmac.compare_digest(str(payload["pwd"]), _password_fingerprint(user)):
+        return None
+    return user
 
 
 async def authenticate_user(db: AsyncSession, identifier: str, password: str) -> models.User | None:
