@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import RedirectResponse
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -20,7 +20,8 @@ from auth import (
 )
 from config import settings
 from database import get_db
-from routers.posts import get_or_create_tags, unique_slug
+from pagination import PageParams, PageResult, Pagination, paginate
+from routers.posts import NEWEST_FIRST, get_or_create_tags, unique_slug
 from routers.users import check_username_email_available
 from storage import Storage, get_storage
 from templating import templates
@@ -30,6 +31,15 @@ StorageDep = Annotated[Storage, Depends(get_storage)]
 router = APIRouter(dependencies=[Depends(get_optional_user)])
 
 POST_RELATIONSHIPS = (selectinload(models.Post.author), selectinload(models.Post.tags))
+TOPIC_LIMIT = 12
+
+
+async def paginate_or_404(db: AsyncSession, query, params: PageParams) -> PageResult:
+    page = await paginate(db, query, params)
+    # Page 1 of an empty list is a valid (empty) page; anything past the end isn't.
+    if params.page > 1 and not page.items:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="page not found")
+    return page
 
 
 def safe_next(next_url: str | None) -> str:
@@ -85,17 +95,22 @@ async def get_post_for_owner(db: AsyncSession, slug: str, user: models.User) -> 
 
 @router.get("/", include_in_schema=False, name="home")
 @router.get("/posts", include_in_schema=False, name="posts")
-async def home(request: Request, db: DbSession):
-    posts = (
+async def home(request: Request, db: DbSession, params: Pagination):
+    page = await paginate_or_404(
+        db, select(models.Post).options(*POST_RELATIONSHIPS).order_by(*NEWEST_FIRST), params
+    )
+    # Topics come from the whole site, not just the posts on this page.
+    topics = (
         await db.scalars(
-            select(models.Post)
-            .options(*POST_RELATIONSHIPS)
-            .order_by(models.Post.published_at.desc())
+            select(models.Tag.name)
+            .join(models.post_tags)
+            .group_by(models.Tag.id)
+            .order_by(func.count().desc(), models.Tag.name)
+            .limit(TOPIC_LIMIT)
         )
     ).all()
-    topics = sorted({tag.name for post in posts for tag in post.tags})
     return templates.TemplateResponse(
-        request, "home.html", {"posts": posts, "topics": topics, "title": "Home"}
+        request, "home.html", {"posts": page.items, "page": page, "topics": topics, "title": "Home"}
     )
 
 
@@ -128,7 +143,7 @@ async def post_detail(request: Request, slug: str, db: DbSession, current_user: 
 
 
 @router.get("/users/{username}", include_in_schema=False, name="user_posts")
-async def user_posts(request: Request, username: str, db: DbSession):
+async def user_posts(request: Request, username: str, db: DbSession, params: Pagination):
     author = await db.scalar(
         select(models.User).where(
             models.User.username == username, models.User.deleted_at.is_(None)
@@ -136,18 +151,18 @@ async def user_posts(request: Request, username: str, db: DbSession):
     )
     if author is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
-    posts = (
-        await db.scalars(
-            select(models.Post)
-            .options(selectinload(models.Post.tags))
-            .where(models.Post.user_id == author.id)
-            .order_by(models.Post.published_at.desc())
-        )
-    ).all()
+    page = await paginate_or_404(
+        db,
+        select(models.Post)
+        .options(selectinload(models.Post.tags))
+        .where(models.Post.user_id == author.id)
+        .order_by(*NEWEST_FIRST),
+        params,
+    )
     return templates.TemplateResponse(
         request,
         "user_posts.html",
-        {"author": author, "posts": posts, "title": author.name},
+        {"author": author, "posts": page.items, "page": page, "title": author.name},
     )
 
 

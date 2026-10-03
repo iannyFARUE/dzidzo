@@ -1,0 +1,29 @@
+{% if page.pages > 1 %}
+<nav aria-label="Pagination" class="mt-10 flex items-center justify-between gap-4 text-sm">
+  {% if page.has_prev %}
+  <a
+    href="{{ request.url.include_query_params(page=page.page - 1) }}"
+    rel="prev"
+    class="rounded-full border border-gray-300 px-4 py-1.5 text-gray-700 hover:border-gray-900 hover:text-gray-900"
+  >
+    &larr; Newer
+  </a>
+  {% else %}
+  <span></span>
+  {% endif %}
+
+  <span class="text-gray-500">Page {{ page.page }} of {{ page.pages }}</span>
+
+  {% if page.has_next %}
+  <a
+    href="{{ request.url.include_query_params(page=page.page + 1) }}"
+    rel="next"
+    class="rounded-full border border-gray-300 px-4 py-1.5 text-gray-700 hover:border-gray-900 hover:text-gray-900"
+  >
+    Older &rarr;
+  </a>
+  {% else %}
+  <span></span>
+  {% endif %}
+</nav>
+{% endif %}

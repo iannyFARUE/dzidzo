@@ -1,6 +1,8 @@
 import re
 
+from pagination import Pagination, paginate
 from schemas import (
+    Page,
     PostCreate,
     PostReplace,
     PostResponse,
@@ -23,6 +25,8 @@ router = APIRouter()
 
 
 POST_RELATIONSHIPS = (selectinload(models.Post.author), selectinload(models.Post.tags))
+# id breaks ties between posts published at the same instant, so pages never overlap or skip.
+NEWEST_FIRST = (models.Post.published_at.desc(), models.Post.id.desc())
 
 
 def slugify(title: str) -> str:
@@ -70,15 +74,10 @@ async def get_owned_post(db: AsyncSession, post_id: int, user: models.User) -> m
     return post
 
 
-@router.get("", response_model=list[PostResponse])
-async def get_posts(db: DbSession):
-    return (
-        await db.scalars(
-            select(models.Post)
-            .options(*POST_RELATIONSHIPS)
-            .order_by(models.Post.published_at.desc())
-        )
-    ).all()
+@router.get("", response_model=Page[PostResponse])
+async def get_posts(db: DbSession, params: Pagination):
+    query = select(models.Post).options(*POST_RELATIONSHIPS).order_by(*NEWEST_FIRST)
+    return await paginate(db, query, params)
 
 
 @router.get("/{post_id}", response_model=PostResponse)
@@ -154,16 +153,15 @@ async def delete_post(post_id: int, db: DbSession, current_user: CurrentUser):
 
 
 
-@router.get("/{user_id}/posts", response_model=list[PostResponse])
-async def get_user_posts(user_id: int, db: DbSession):
+@router.get("/{user_id}/posts", response_model=Page[PostResponse])
+async def get_user_posts(user_id: int, db: DbSession, params: Pagination):
     user = await get_active_user(db, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
-    return (
-        await db.scalars(
-            select(models.Post)
-            .options(*POST_RELATIONSHIPS)
-            .where(models.Post.user_id == user_id)
-            .order_by(models.Post.published_at.desc())
-        )
-    ).all()
+    query = (
+        select(models.Post)
+        .options(*POST_RELATIONSHIPS)
+        .where(models.Post.user_id == user_id)
+        .order_by(*NEWEST_FIRST)
+    )
+    return await paginate(db, query, params)

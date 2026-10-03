@@ -82,6 +82,18 @@ class PostResponse(PostBase):
         return [tag.name if hasattr(tag, "name") else tag for tag in tags]
 
 
+class Page[T](BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    items: list[T]
+    total: int = Field(ge=0)
+    page: int = Field(ge=1)
+    page_size: int = Field(ge=1)
+    pages: int = Field(ge=0)
+    has_next: bool
+    has_prev: bool
+
+
 class PostCreate(PostBase):
     pass
 

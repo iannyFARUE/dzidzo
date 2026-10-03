@@ -155,13 +155,35 @@ curl -X POST http://127.0.0.1:8000/api/users/token \
 
 | Method | Path | Description | Auth |
 | --- | --- | --- | --- |
-| GET | *(no trailing slash)* | List all posts, newest first | |
+| GET | *(no trailing slash)* | List posts, newest first (paginated) | |
 | GET | `/{post_id}` | Get one post | |
-| GET | `/{user_id}/posts` | All posts by a user | |
+| GET | `/{user_id}/posts` | A user's posts (paginated) | |
 | POST | `/` | Create a post | ✓ |
 | PATCH | `/{post_id}` | Partially update a post | ✓ (author) |
 | PUT | `/{post_id}` | Replace a post | ✓ (author) |
 | DELETE | `/{post_id}` | Delete a post | ✓ (author) |
+
+### Pagination
+
+The post list endpoints take two optional query parameters:
+- `page`: starts at 1 (default 1)
+- `page_size`: from 1 to 50 (default 10)
+
+They return a page object instead of a plain list:
+
+```json
+{
+  "items": [ /* posts */ ],
+  "total": 24,
+  "page": 1,
+  "page_size": 10,
+  "pages": 3,
+  "has_next": true,
+  "has_prev": false
+}
+```
+
+A page past the end returns an empty `items` list. The web pages use the same `?page=` parameter, but show a 404 for a page past the end.
 
 ### Uploading a profile photo
 
