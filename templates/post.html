@@ -50,7 +50,9 @@
     {% endif %}
   </div>
 
+  {% if post.cover_image %}
   <img src="{{ post.cover_image }}" alt="" class="w-full h-auto rounded mt-8" />
+  {% endif %}
 
   <div class="mt-8 font-serif text-lg sm:text-xl leading-relaxed text-gray-800">
     <p>{{ post.content }}</p>
@@ -88,7 +90,9 @@
   <div class="grid sm:grid-cols-2 gap-8">
     {% for p in more_posts %}
     <a href="/posts/{{ p.slug }}" class="group block">
+      {% if p.cover_image %}
       <img src="{{ p.cover_image }}" alt="" class="w-full h-36 object-cover rounded mb-3" />
+      {% endif %}
       <div class="flex items-center gap-2 mb-1">
         <img src="{{ p.author.avatar }}" alt="{{ p.author.name }}" class="w-5 h-5 rounded-full object-cover" />
         <span class="text-xs text-gray-600">{{ p.author.name }}</span>

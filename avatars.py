@@ -1,73 +1,26 @@
-import io
 from uuid import uuid4
 
 from fastapi import UploadFile
 from fastapi.concurrency import run_in_threadpool
-from PIL import Image, ImageOps, ImageSequence, UnidentifiedImageError
+from PIL import Image, ImageOps
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import images
 import models
 from config import settings
 from storage import Storage
 
 DEFAULT_AVATAR = "/media/profile_pics/default.jpg"
 AVATAR_SIZE = 256
-ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP", "GIF"}
-MAX_FRAMES = 200
-
-# Reject decompression bombs: a tiny file that expands to an enormous bitmap.
-Image.MAX_IMAGE_PIXELS = 40_000_000
-
-
-class AvatarError(ValueError):
-    """The upload isn't an acceptable image. The message is safe to show to the user."""
 
 
 def _square(image: Image.Image) -> Image.Image:
-    # RGBA keeps transparency from PNG/GIF/WebP; WebP output supports alpha.
-    return ImageOps.fit(image.convert("RGBA"), (AVATAR_SIZE, AVATAR_SIZE), Image.Resampling.LANCZOS)
-
-
-def _process(data: bytes) -> bytes:
-    # Re-encoding (rather than storing the upload as-is) strips EXIF/GPS metadata and
-    # anything smuggled alongside the pixels, and guarantees the file really is an image.
-    out = io.BytesIO()
-    try:
-        with Image.open(io.BytesIO(data)) as image:
-            if image.format not in ALLOWED_FORMATS:
-                raise AvatarError("Please upload a JPEG, PNG, WebP or GIF image.")
-
-            if getattr(image, "is_animated", False):
-                # Cap frames so a small file can't make us resize thousands of images.
-                if image.n_frames > MAX_FRAMES:
-                    raise AvatarError(f"Animated images can have at most {MAX_FRAMES} frames.")
-                frames, durations = [], []
-                for frame in ImageSequence.Iterator(image):
-                    frames.append(_square(frame))
-                    # Browsers treat 0 ms GIF frames as ~100 ms; WebP would play them instantly.
-                    durations.append(frame.info.get("duration") or 100)
-                frames[0].save(
-                    out, format="WEBP", quality=85, save_all=True, append_images=frames[1:],
-                    duration=durations, loop=image.info.get("loop", 0),
-                )
-            else:
-                _square(ImageOps.exif_transpose(image)).save(out, format="WEBP", quality=85)
-    except (UnidentifiedImageError, Image.DecompressionBombError, OSError) as exc:
-        raise AvatarError("That file isn't a valid image.") from exc
-    return out.getvalue()
-
-
-async def read_upload(upload: UploadFile) -> bytes:
-    data = await upload.read(settings.max_avatar_bytes + 1)
-    if not data:
-        raise AvatarError("Please choose an image to upload.")
-    if len(data) > settings.max_avatar_bytes:
-        raise AvatarError(f"Images must be {settings.max_avatar_bytes // (1024 * 1024)} MB or smaller.")
-    return data
+    return ImageOps.fit(image, (AVATAR_SIZE, AVATAR_SIZE), Image.Resampling.LANCZOS)
 
 
 async def set_avatar(db: AsyncSession, storage: Storage, user: models.User, upload: UploadFile) -> None:
-    image = await run_in_threadpool(_process, await read_upload(upload))
+    data = await images.read_upload(upload, settings.max_avatar_bytes)
+    image = await run_in_threadpool(images.reencode, data, _square)
     new_url = await storage.save(f"profile_pics/{uuid4().hex}.webp", image, "image/webp")
     await _replace_avatar(db, storage, user, new_url)
 

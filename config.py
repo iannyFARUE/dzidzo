@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     media_root: str = "media"
     media_url: str = "/media"
     max_avatar_bytes: int = 5 * 1024 * 1024
+    max_cover_bytes: int = 10 * 1024 * 1024
 
     # Used to build links in emails. Taken from config rather than the request's Host
     # header, so a forged Host can't point password-reset links at another site.

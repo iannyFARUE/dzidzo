@@ -74,7 +74,9 @@ class Post(Base):
     title: Mapped[str] = mapped_column(String(100), nullable=False)
     subtitle: Mapped[str] = mapped_column(String(200), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    cover_image: Mapped[str] = mapped_column(String(300), nullable=False)
+    # "" means no cover. Kept NOT NULL (rather than nullable) so existing databases, which
+    # can't have the constraint dropped without a migration, keep working.
+    cover_image: Mapped[str] = mapped_column(String(300), nullable=False, default="")
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id"),
         nullable=False,

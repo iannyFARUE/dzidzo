@@ -10,17 +10,21 @@ from schemas import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 import models
-from fastapi import Depends, FastAPI, Request, HTTPException, status, APIRouter
+from fastapi import Depends, FastAPI, Request, HTTPException, UploadFile, status, APIRouter
 from typing import Annotated
 from database import get_db
 from sqlalchemy import select
 from datetime import UTC, datetime
 from sqlalchemy.orm import selectinload
 
+import covers
+import images
 from auth import CurrentUser
+from storage import Storage, get_storage
 
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
+StorageDep = Annotated[Storage, Depends(get_storage)]
 router = APIRouter()
 
 
@@ -95,7 +99,6 @@ async def create_post(post_in: PostCreate, db: DbSession, current_user: CurrentU
         title=post_in.title,
         subtitle=post_in.subtitle,
         content=post_in.content,
-        cover_image=post_in.cover_image,
         author=current_user,
         tags=await get_or_create_tags(db, post_in.tags),
         read_time_minutes=max(1, len(post_in.content.split()) // 200),
@@ -119,8 +122,6 @@ async def update_post(post_id: int, post_in: PostUpdate, db: DbSession, current_
     if "content" in updates:
         post.content = updates["content"]
         post.read_time_minutes = max(1, len(updates["content"].split()) // 200)
-    if "cover_image" in updates:
-        post.cover_image = updates["cover_image"]
     if "tags" in updates:
         post.tags = await get_or_create_tags(db, updates["tags"])
 
@@ -136,7 +137,6 @@ async def replace_post(post_id: int, post_in: PostReplace, db: DbSession, curren
     post.slug = await unique_slug(db, post_in.title, exclude_post_id=post.id)
     post.subtitle = post_in.subtitle
     post.content = post_in.content
-    post.cover_image = post_in.cover_image
     post.tags = await get_or_create_tags(db, post_in.tags)
     post.read_time_minutes = max(1, len(post_in.content.split()) // 200)
 
@@ -145,10 +145,33 @@ async def replace_post(post_id: int, post_in: PostReplace, db: DbSession, curren
 
 
 @router.delete("/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_post(post_id: int, db: DbSession, current_user: CurrentUser):
+async def delete_post(post_id: int, db: DbSession, storage: StorageDep, current_user: CurrentUser):
     post = await get_owned_post(db, post_id, current_user)
+    cover = post.cover_image
     await db.delete(post)
     await db.commit()
+    if cover:
+        await storage.delete(cover)
+
+
+@router.put("/{post_id}/cover", response_model=PostResponse)
+async def upload_cover(post_id: int, file: UploadFile, db: DbSession, storage: StorageDep, current_user: CurrentUser):
+    post = await get_owned_post(db, post_id, current_user)
+    try:
+        new_url = await covers.store_cover(storage, file)
+    except images.ImageError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc))
+    old_url, post.cover_image = post.cover_image, new_url
+    await covers.commit_cover_change(db, storage, old_url, new_url)
+    return post
+
+
+@router.delete("/{post_id}/cover", response_model=PostResponse)
+async def remove_cover(post_id: int, db: DbSession, storage: StorageDep, current_user: CurrentUser):
+    post = await get_owned_post(db, post_id, current_user)
+    old_url, post.cover_image = post.cover_image, ""
+    await covers.commit_cover_change(db, storage, old_url, "")
+    return post
 
 
 

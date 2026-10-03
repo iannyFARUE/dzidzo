@@ -78,8 +78,9 @@ class PostBase(BaseModel):
     title: str = Field(min_length=1, max_length=100)
     subtitle: str = Field(min_length=1, max_length=200)
     content: str = Field(min_length=1)
-    cover_image: str = Field(min_length=1, max_length=300)
     tags: list[TagName] = Field(default_factory=list, max_length=10)
+    # cover_image is deliberately absent: like avatars, it's only set by the upload
+    # endpoints, so it always points at a processed image this site stored.
 
 
 class PostResponse(PostBase):
@@ -93,6 +94,12 @@ class PostResponse(PostBase):
     read_time_minutes: int = Field(ge=1)
     published_at: datetime
     updated_at: datetime
+    cover_image: str | None
+
+    @field_validator("cover_image", mode="before")
+    @classmethod
+    def _no_cover_is_null(cls, cover_image: str | None) -> str | None:
+        return cover_image or None
 
     @field_validator("tags", mode="before")
     @classmethod
@@ -124,6 +131,5 @@ class PostUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=100)
     subtitle: str | None = Field(default=None, min_length=1, max_length=200)
     content: str | None = Field(default=None, min_length=1)
-    cover_image: str | None = Field(default=None, min_length=1, max_length=300)
     tags: list[TagName] | None = Field(default=None, max_length=10)
 

@@ -27,6 +27,7 @@ from schemas import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 import avatars
+import images
 import mail
 import models
 from fastapi import BackgroundTasks, Depends, FastAPI, Request, HTTPException, UploadFile, status, APIRouter
@@ -185,7 +186,7 @@ async def read_me(current_user: CurrentUser):
 async def upload_avatar(file: UploadFile, db: DbSession, storage: StorageDep, current_user: CurrentUser):
     try:
         await avatars.set_avatar(db, storage, current_user, file)
-    except avatars.AvatarError as exc:
+    except images.ImageError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc))
     return current_user
 

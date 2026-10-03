@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 import avatars
+import covers
+import images
 import models
 import schemas
 from auth import (
@@ -474,9 +476,9 @@ async def update_avatar(
         return login_redirect(request, next_path="/profile")
     try:
         if avatar is None:
-            raise avatars.AvatarError("Please choose an image to upload.")
+            raise images.ImageError("Please choose an image to upload.")
         await avatars.set_avatar(db, storage, current_user, avatar)
-    except avatars.AvatarError as exc:
+    except images.ImageError as exc:
         return render_profile(
             request, current_user, errors={"avatar": str(exc)},
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -503,85 +505,110 @@ def _parse_tags(tags: str) -> list[str]:
     return [name.strip() for name in tags.split(",") if name.strip()]
 
 
-def _form_values(title: str, subtitle: str, content: str, cover_image: str, tag_names: list[str]) -> dict:
+def _form_values(title: str, subtitle: str, content: str, tag_names: list[str]) -> dict:
     return {
         "title": title,
         "subtitle": subtitle,
         "content": content,
-        "cover_image": cover_image,
         "tags": ", ".join(tag_names),
     }
+
+
+def render_post_form(
+    request: Request,
+    post: models.Post | None = None,
+    *,
+    values: dict | None = None,
+    errors: dict | None = None,
+    status_code: int = status.HTTP_200_OK,
+):
+    if post is None:
+        context = {
+            "title": "Write a story",
+            "heading": "New story",
+            "submit_label": "Publish",
+            "form_action": request.url_for("create_post_form"),
+        }
+    else:
+        context = {
+            "title": f'Edit "{post.title}"',
+            "heading": "Edit story",
+            "submit_label": "Update",
+            "form_action": request.url_for("update_post_form", slug=post.slug),
+            "delete_action": request.url_for("delete_post_form", slug=post.slug),
+            "cover_url": post.cover_image,
+        }
+    context |= {
+        "values": values,
+        "errors": errors,
+        "max_cover_mb": settings.max_cover_bytes // (1024 * 1024),
+    }
+    return templates.TemplateResponse(request, "post_form.html", context, status_code=status_code)
+
+
+def _post_errors(exc: ValidationError, cover: UploadFile | None) -> dict[str, str]:
+    errors = {error["loc"][0]: error["msg"] for error in exc.errors()}
+    if images.has_file(cover):
+        # Browsers can't refill a file input, so the chosen image is gone after this round trip.
+        errors["cover"] = "Please choose your cover image again."
+    return errors
 
 
 @router.get("/write", include_in_schema=False, name="new_post_form")
 async def new_post_form(request: Request, current_user: OptionalUser):
     if current_user is None:
         return login_redirect(request)
-    return templates.TemplateResponse(
-        request,
-        "post_form.html",
-        {
-            "title": "Write a story",
-            "heading": "New story",
-            "submit_label": "Publish",
-            "form_action": request.url_for("create_post_form"),
-        },
-    )
+    return render_post_form(request)
 
 
 @router.post("/write", include_in_schema=False, name="create_post_form")
 async def create_post_form(
     request: Request,
     db: DbSession,
+    storage: StorageDep,
     current_user: OptionalUser,
     title: Annotated[str, Form()] = "",
     subtitle: Annotated[str, Form()] = "",
     content: Annotated[str, Form()] = "",
-    cover_image: Annotated[str, Form()] = "",
     tags: Annotated[str, Form()] = "",
+    cover: Annotated[UploadFile | None, File()] = None,
 ):
     if current_user is None:
         return login_redirect(request)
 
     tag_names = _parse_tags(tags)
-    values = _form_values(title, subtitle, content, cover_image, tag_names)
+    values = _form_values(title, subtitle, content, tag_names)
 
     try:
-        post_in = schemas.PostBase(
-            title=title,
-            subtitle=subtitle,
-            content=content,
-            cover_image=cover_image,
-            tags=tag_names,
-        )
+        post_in = schemas.PostBase(title=title, subtitle=subtitle, content=content, tags=tag_names)
     except ValidationError as exc:
-        errors = {error["loc"][0]: error["msg"] for error in exc.errors()}
-        return templates.TemplateResponse(
-            request,
-            "post_form.html",
-            {
-                "title": "Write a story",
-                "heading": "New story",
-                "submit_label": "Publish",
-                "form_action": request.url_for("create_post_form"),
-                "errors": errors,
-                "values": values,
-            },
+        return render_post_form(
+            request, values=values, errors=_post_errors(exc, cover),
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
+
+    cover_url = ""
+    if images.has_file(cover):
+        try:
+            cover_url = await covers.store_cover(storage, cover)
+        except images.ImageError as exc:
+            return render_post_form(
+                request, values=values, errors={"cover": str(exc)},
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            )
 
     post = models.Post(
         slug=await unique_slug(db, post_in.title),
         title=post_in.title,
         subtitle=post_in.subtitle,
         content=post_in.content,
-        cover_image=post_in.cover_image,
+        cover_image=cover_url,
         author=current_user,
         tags=await get_or_create_tags(db, post_in.tags),
         read_time_minutes=max(1, len(post_in.content.split()) // 200),
     )
     db.add(post)
-    await db.commit()
+    await covers.commit_cover_change(db, storage, "", cover_url)
 
     return RedirectResponse(
         request.url_for("post_detail", slug=post.slug), status_code=status.HTTP_303_SEE_OTHER
@@ -594,21 +621,8 @@ async def edit_post_form(request: Request, slug: str, db: DbSession, current_use
         return login_redirect(request)
     post = await get_post_for_owner(db, slug, current_user)
 
-    values = _form_values(
-        post.title, post.subtitle, post.content, post.cover_image, [tag.name for tag in post.tags]
-    )
-    return templates.TemplateResponse(
-        request,
-        "post_form.html",
-        {
-            "title": f'Edit "{post.title}"',
-            "heading": "Edit story",
-            "submit_label": "Update",
-            "form_action": request.url_for("update_post_form", slug=post.slug),
-            "delete_action": request.url_for("delete_post_form", slug=post.slug),
-            "values": values,
-        },
-    )
+    values = _form_values(post.title, post.subtitle, post.content, [tag.name for tag in post.tags])
+    return render_post_form(request, post, values=values)
 
 
 @router.post("/posts/{slug}/edit", include_in_schema=False, name="update_post_form")
@@ -616,54 +630,51 @@ async def update_post_form(
     request: Request,
     slug: str,
     db: DbSession,
+    storage: StorageDep,
     current_user: OptionalUser,
     title: Annotated[str, Form()] = "",
     subtitle: Annotated[str, Form()] = "",
     content: Annotated[str, Form()] = "",
-    cover_image: Annotated[str, Form()] = "",
     tags: Annotated[str, Form()] = "",
+    cover: Annotated[UploadFile | None, File()] = None,
+    remove_cover: Annotated[bool, Form()] = False,
 ):
     if current_user is None:
         return login_redirect(request)
     post = await get_post_for_owner(db, slug, current_user)
 
     tag_names = _parse_tags(tags)
-    values = _form_values(title, subtitle, content, cover_image, tag_names)
+    values = _form_values(title, subtitle, content, tag_names)
 
     try:
-        post_in = schemas.PostBase(
-            title=title,
-            subtitle=subtitle,
-            content=content,
-            cover_image=cover_image,
-            tags=tag_names,
-        )
+        post_in = schemas.PostBase(title=title, subtitle=subtitle, content=content, tags=tag_names)
     except ValidationError as exc:
-        errors = {error["loc"][0]: error["msg"] for error in exc.errors()}
-        return templates.TemplateResponse(
-            request,
-            "post_form.html",
-            {
-                "title": f'Edit "{post.title}"',
-                "heading": "Edit story",
-                "submit_label": "Update",
-                "form_action": request.url_for("update_post_form", slug=post.slug),
-                "delete_action": request.url_for("delete_post_form", slug=post.slug),
-                "errors": errors,
-                "values": values,
-            },
+        return render_post_form(
+            request, post, values=values, errors=_post_errors(exc, cover),
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
+
+    # A newly chosen image wins over the "remove" box; otherwise keep the current cover.
+    old_cover = post.cover_image
+    new_cover = "" if remove_cover else old_cover
+    if images.has_file(cover):
+        try:
+            new_cover = await covers.store_cover(storage, cover)
+        except images.ImageError as exc:
+            return render_post_form(
+                request, post, values=values, errors={"cover": str(exc)},
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            )
 
     post.title = post_in.title
     post.slug = await unique_slug(db, post_in.title, exclude_post_id=post.id)
     post.subtitle = post_in.subtitle
     post.content = post_in.content
-    post.cover_image = post_in.cover_image
+    post.cover_image = new_cover
     post.tags = await get_or_create_tags(db, post_in.tags)
     post.read_time_minutes = max(1, len(post_in.content.split()) // 200)
 
-    await db.commit()
+    await covers.commit_cover_change(db, storage, old_cover, new_cover)
 
     return RedirectResponse(
         request.url_for("post_detail", slug=post.slug), status_code=status.HTTP_303_SEE_OTHER
@@ -671,10 +682,15 @@ async def update_post_form(
 
 
 @router.post("/posts/{slug}/delete", include_in_schema=False, name="delete_post_form")
-async def delete_post_form(request: Request, slug: str, db: DbSession, current_user: OptionalUser):
+async def delete_post_form(
+    request: Request, slug: str, db: DbSession, storage: StorageDep, current_user: OptionalUser
+):
     if current_user is None:
         return login_redirect(request, next_path=f"/posts/{slug}")
     post = await get_post_for_owner(db, slug, current_user)
+    cover = post.cover_image
     await db.delete(post)
     await db.commit()
+    if cover:
+        await storage.delete(cover)
     return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)

@@ -6,7 +6,7 @@ A Medium-style blogging platform built with FastAPI. People can sign up, write s
 
 - **Accounts**: register, log in with a username or email, confirm their email address, reset a forgotten password by email, soft-delete an account and restore it later
 - **Profiles**: edit your name, username and email, and upload a profile photo (animated GIFs stay animated)
-- **Stories**: create, edit and delete posts, with automatic slugs, tags and read-time estimates
+- **Stories**: create, edit and delete posts, with an optional uploaded cover image, automatic slugs, tags and read-time estimates
 - **Two front ends on one backend**:
   - HTML pages that use a cookie session
   - A REST API that uses JWT bearer tokens
@@ -63,6 +63,7 @@ python -c "import secrets; print(secrets.token_hex(32))"   # paste the output in
 | `MEDIA_ROOT` | `media` | Folder where uploaded files are stored |
 | `MEDIA_URL` | `/media` | URL path that serves `MEDIA_ROOT` |
 | `MAX_AVATAR_BYTES` | `5242880` (5 MB) | Largest profile photo upload allowed |
+| `MAX_COVER_BYTES` | `10485760` (10 MB) | Largest cover image upload allowed |
 | `APP_BASE_URL` | `http://127.0.0.1:8000` | Public address of the site, used to build links in emails |
 | `PASSWORD_RESET_EXPIRE_MINUTES` | `30` | How long a password reset link stays valid |
 | `EMAIL_VERIFY_EXPIRE_MINUTES` | `1440` (24 hours) | How long an email confirmation link stays valid |
@@ -116,7 +117,9 @@ The SQLite database (`blog.db`) and its tables are created automatically on firs
 ├── schemas.py         # Pydantic request/response schemas
 ├── auth.py            # Password hashing, JWT creation/validation, current-user dependencies
 ├── mail.py            # SMTP email sending (Mailtrap in dev)
-├── avatars.py         # Profile photo validation, resizing and replacement
+├── images.py          # Shared image validation and WebP re-encoding (Pillow)
+├── avatars.py         # Profile photo resizing and replacement
+├── covers.py          # Post cover image resizing and replacement
 ├── storage.py         # File storage interface + local-disk implementation
 ├── errors.py          # JSON errors for /api, HTML error page for everything else
 ├── templating.py      # Jinja2 setup (injects current_user into every template)
@@ -189,7 +192,9 @@ curl -X POST http://127.0.0.1:8000/api/users/token \
 | POST | `/` | Create a post | ✓ |
 | PATCH | `/{post_id}` | Partially update a post | ✓ (author) |
 | PUT | `/{post_id}` | Replace a post | ✓ (author) |
-| DELETE | `/{post_id}` | Delete a post | ✓ (author) |
+| DELETE | `/{post_id}` | Delete a post and its cover image | ✓ (author) |
+| PUT | `/{post_id}/cover` | Upload a cover image (multipart field `file`) | ✓ (author) |
+| DELETE | `/{post_id}/cover` | Remove the cover image | ✓ (author) |
 
 ### Pagination
 
@@ -223,25 +228,34 @@ curl -X PUT http://127.0.0.1:8000/api/users/me/avatar \
 
 `avatar` can't be set through `PATCH`/`PUT /api/users/{id}`. It changes only through these upload endpoints, so nobody can point their avatar at another user's file.
 
+### Uploading a cover image
+
+```bash
+curl -X PUT http://127.0.0.1:8000/api/posts/1/cover   -H "Authorization: Bearer <token>"   -F "file=@cover.jpg"
+```
+
+The same rule applies to covers: `cover_image` is read-only in the post JSON and changes only through `PUT`/`DELETE /api/posts/{id}/cover`. It is `null` when a post has no cover.
+
 ### Validation rules
 
 - **Username:** 1–50 characters. It can't contain `@`, which is reserved for emails so a username can never be mistaken for an email at login.
 - **Email:** must look like `name@domain`, max 120 characters
 - **Password:** 8–128 characters
 - **Post:** title ≤ 100 characters, subtitle ≤ 200 characters, and up to 10 tags of ≤ 30 characters each
-- **Profile photo:**
-  - JPEG, PNG, WebP or GIF, up to 5 MB by default
+- **Profile photo and cover image:**
+  - JPEG, PNG, WebP or GIF, up to 5 MB (photo) or 10 MB (cover) by default
   - Animated images can have up to 200 frames
 
-## Profile photos
+## Profile photos and cover images
 
-- **Processing:** every upload is cropped to a 256×256 square and saved again as WebP. This:
+- **Processing:** every upload is saved again as WebP. Profile photos are cropped to a 256×256 square. Cover images keep their shape and are scaled down to fit within 1600×1600 (never scaled up). Re-encoding:
   - removes photo metadata such as GPS location
   - means only real images are stored, never the raw upload
   - keeps transparency and animation
 - **Storage:**
   - Each file gets a random name.
-  - When a user uploads a new photo, the old file is deleted only after the database points to the new one.
+  - Profile photos go in `MEDIA_ROOT/profile_pics/`, cover images in `MEDIA_ROOT/covers/`.
+  - When a photo or cover is replaced or removed, the old file is deleted only after the database points to the new one. Deleting a post also deletes its cover.
 - **Moving to cloud storage (e.g. S3):**
   - [storage.py](storage.py) defines a `Storage` interface with two methods: `save(key, data, content_type)`, which returns the file's public URL, and `delete(url)`.
   - `LocalStorage` writes files to `MEDIA_ROOT`.

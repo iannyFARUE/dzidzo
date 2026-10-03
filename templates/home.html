@@ -39,6 +39,7 @@
           </div>
         </div>
 
+        {% if post.cover_image %}
         <a href="/posts/{{ post.slug }}" class="hidden sm:block shrink-0">
           <img
             src="{{ post.cover_image }}"
@@ -46,6 +47,7 @@
             class="w-28 h-28 object-cover rounded"
           />
         </a>
+        {% endif %}
       </article>
       {% else %}
       <p class="py-8 text-sm text-gray-500">No stories yet. <a href="/write" class="underline">Write the first one.</a></p>
