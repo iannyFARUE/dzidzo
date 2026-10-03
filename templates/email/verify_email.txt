@@ -1,0 +1,11 @@
+Hi {{ name }},
+
+Please confirm that this is your email address for Dzidzo by opening this link:
+
+{{ verify_url }}
+
+The link expires in {{ expire_hours }} hours.
+
+If you didn't create a Dzidzo account or change your email, you can ignore this email.
+
+- Dzidzo

@@ -4,7 +4,7 @@ A Medium-style blogging platform built with FastAPI. People can sign up, write s
 
 ## Features
 
-- **Accounts**: register, log in with a username or email, reset a forgotten password by email, soft-delete an account and restore it later
+- **Accounts**: register, log in with a username or email, confirm their email address, reset a forgotten password by email, soft-delete an account and restore it later
 - **Profiles**: edit your name, username and email, and upload a profile photo (animated GIFs stay animated)
 - **Stories**: create, edit and delete posts, with automatic slugs, tags and read-time estimates
 - **Two front ends on one backend**:
@@ -65,6 +65,7 @@ python -c "import secrets; print(secrets.token_hex(32))"   # paste the output in
 | `MAX_AVATAR_BYTES` | `5242880` (5 MB) | Largest profile photo upload allowed |
 | `APP_BASE_URL` | `http://127.0.0.1:8000` | Public address of the site, used to build links in emails |
 | `PASSWORD_RESET_EXPIRE_MINUTES` | `30` | How long a password reset link stays valid |
+| `EMAIL_VERIFY_EXPIRE_MINUTES` | `1440` (24 hours) | How long an email confirmation link stays valid |
 | `SMTP_HOST` | `sandbox.smtp.mailtrap.io` | SMTP server |
 | `SMTP_PORT` | `2525` | SMTP port |
 | `SMTP_USERNAME` | *(empty)* | SMTP username. If empty, emails are printed to the console instead of sent. |
@@ -78,7 +79,7 @@ Development email goes to a [Mailtrap](https://mailtrap.io) sandbox inbox, which
 
 1. Sign up and open **Email Testing → Inboxes → My Inbox**.
 2. Under **SMTP Settings**, copy the username and password into `SMTP_USERNAME` and `SMTP_PASSWORD` in `.env`. The host and port defaults already point at the sandbox.
-3. Restart the server. Emails such as password reset links now show up in that Mailtrap inbox.
+3. Restart the server. Emails such as confirmation and password reset links now show up in that Mailtrap inbox.
 
 If you skip this, emails are printed to the server console, which also works for local testing.
 
@@ -138,6 +139,7 @@ The SQLite database (`blog.db`) and its tables are created automatically on firs
 | `/login`, `/register` | Sign in / create an account | |
 | `/forgot-password` | Request a password reset email | |
 | `/reset-password?token=…` | Choose a new password (link from the email) | |
+| `/verify-email?token=…` | Confirm your email address (link from the email) | |
 | `/write` | Write a new story | ✓ |
 | `/posts/{slug}/edit` | Edit or delete your story | ✓ (author only) |
 | `/profile` | Your details and profile photo (click your avatar in the header) | ✓ |
@@ -166,7 +168,9 @@ curl -X POST http://127.0.0.1:8000/api/users/token \
 | POST | `/token` | Log in and get an access token | |
 | POST | `/forgot-password` | Email a password reset link (`{"email": ...}`). Always returns 202. | |
 | POST | `/reset-password` | Set a new password (`{"token": ..., "new_password": ...}`) | |
-| GET | `/me` | Your own profile, including your email | ✓ |
+| POST | `/verify-email` | Confirm an email address (`{"token": ...}`) | |
+| GET | `/me` | Your own profile, including your email and `email_verified_at` | ✓ |
+| POST | `/me/verify-email` | Send a new confirmation email (409 if already confirmed) | ✓ |
 | PUT | `/me/avatar` | Upload a profile photo (multipart field `file`) | ✓ |
 | DELETE | `/me/avatar` | Reset your profile photo to the default | ✓ |
 | GET | `/{user_id}` | Public profile | |
@@ -243,6 +247,13 @@ curl -X PUT http://127.0.0.1:8000/api/users/me/avatar \
   - `LocalStorage` writes files to `MEDIA_ROOT`.
   - To use S3, write a class with those two methods and return it from `get_storage()`. No other code needs to change.
 
+## Email verification
+
+- **When links are sent:** on registration, and whenever an account's email changes (profile page, `PATCH`/`PUT /api/users/{id}`, or restoring an account with a new email). Changing the email also marks it unconfirmed again.
+- **Optional:** an unconfirmed account can still do everything. It sees a banner asking it to confirm, and the profile page has a "Resend link" button. The API exposes `email_verified_at` (`null` until confirmed), so you can require a confirmed email for an action later if you want.
+- **The link:** contains a signed token naming the address it was sent to. It can only confirm that address, so if the email changes, earlier links stop working. Opening a link again is harmless.
+- **Separate from other tokens:** confirmation tokens have their own JWT audience, so they can't be used to log in or to reset a password.
+
 ## Password reset
 
 - **Requesting a link:** `/forgot-password` returns the same message whether or not the email has an account. The email is sent after the response, so response times don't give it away either.
@@ -257,5 +268,5 @@ curl -X PUT http://127.0.0.1:8000/api/users/me/avatar \
   - A deleted account can't log in, and its tokens stop working.
   - Its username and email become free for others to register.
   - When restoring, you can pick a new username or email if the old one has been taken.
-- **No migrations:** tables are created with `create_all` on startup. If you change `models.py`, delete `blog.db` during development, or add Alembic for real schema migrations.
+- **No migrations:** tables are created with `create_all` on startup, and new *nullable* columns are added to existing tables automatically (see `add_missing_columns` in [database.py](database.py)). Any other change to `models.py` (a new required column, a renamed column, a new index) needs `blog.db` deleted during development, or Alembic for real schema migrations.
 - **Tokens can't be revoked early:** logging out clears the cookie, but a copied JWT stays valid until it expires.

@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from config import settings
-from database import Base, engine
+from database import Base, add_missing_columns, engine
 from errors import register_exception_handlers
 from routers import frontend, posts, users
 
@@ -13,6 +13,7 @@ from routers import frontend, posts, users
 async def lifespan(_app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(add_missing_columns)
     yield
     await engine.dispose()
 

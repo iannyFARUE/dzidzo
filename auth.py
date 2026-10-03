@@ -24,10 +24,11 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/users/token")
 
 ACCESS_TOKEN_COOKIE = "access_token"
 
-# Reset tokens carry this audience. jwt.decode rejects a token that has an "aud" claim
-# unless the caller asks for that audience, so a reset token can never be used as an
-# access token, and the reset decoder below won't accept an access token either.
+# Single-purpose tokens carry an audience. jwt.decode rejects a token that has an "aud"
+# claim unless the caller asks for that audience, so these can never be used as access
+# tokens, an access token is never accepted here, and the two kinds can't be swapped.
 PASSWORD_RESET_AUDIENCE = "password-reset"
+EMAIL_VERIFY_AUDIENCE = "email-verify"
 
 
 def hash_password(password: str) -> str:
@@ -50,25 +51,23 @@ def _password_fingerprint(user: models.User) -> str:
     return hashlib.sha256(user.password_hash.encode()).hexdigest()[:16]
 
 
-def create_password_reset_token(user: models.User) -> str:
-    expire = datetime.now(UTC) + timedelta(minutes=settings.password_reset_expire_minutes)
-    payload = {
-        "sub": str(user.id),
-        "aud": PASSWORD_RESET_AUDIENCE,
-        "exp": expire,
-        "pwd": _password_fingerprint(user),
-    }
+def _create_purpose_token(user: models.User, audience: str, minutes: int, **claims: str) -> str:
+    expire = datetime.now(UTC) + timedelta(minutes=minutes)
+    payload = {"sub": str(user.id), "aud": audience, "exp": expire, **claims}
     return jwt.encode(payload, settings.secret_key.get_secret_value(), algorithm=settings.algorithm)
 
 
-async def get_user_from_reset_token(db: AsyncSession, token: str) -> models.User | None:
+async def _decode_purpose_token(
+    db: AsyncSession, token: str, audience: str, claim: str
+) -> tuple[models.User, str] | None:
+    """Return the active user a token was issued to, plus the value of its extra claim."""
     try:
         payload = jwt.decode(
             token,
             settings.secret_key.get_secret_value(),
             algorithms=[settings.algorithm],
-            audience=PASSWORD_RESET_AUDIENCE,
-            options={"require": ["exp", "sub", "aud", "pwd"]},
+            audience=audience,
+            options={"require": ["exp", "sub", "aud", claim]},
         )
         user_id = int(payload["sub"])
     except (jwt.InvalidTokenError, ValueError):
@@ -77,7 +76,40 @@ async def get_user_from_reset_token(db: AsyncSession, token: str) -> models.User
     user = await db.get(models.User, user_id)
     if user is None or user.deleted_at is not None:
         return None
-    if not hmac.compare_digest(str(payload["pwd"]), _password_fingerprint(user)):
+    return user, str(payload[claim])
+
+
+def create_password_reset_token(user: models.User) -> str:
+    return _create_purpose_token(
+        user, PASSWORD_RESET_AUDIENCE, settings.password_reset_expire_minutes,
+        pwd=_password_fingerprint(user),
+    )
+
+
+async def get_user_from_reset_token(db: AsyncSession, token: str) -> models.User | None:
+    decoded = await _decode_purpose_token(db, token, PASSWORD_RESET_AUDIENCE, "pwd")
+    if decoded is None:
+        return None
+    user, fingerprint = decoded
+    if not hmac.compare_digest(fingerprint, _password_fingerprint(user)):
+        return None
+    return user
+
+
+def create_email_verification_token(user: models.User) -> str:
+    # The token names the address it was sent to, so it can only ever verify that
+    # address, and changing the email makes earlier links useless.
+    return _create_purpose_token(
+        user, EMAIL_VERIFY_AUDIENCE, settings.email_verify_expire_minutes, email=user.email
+    )
+
+
+async def get_user_from_verification_token(db: AsyncSession, token: str) -> models.User | None:
+    decoded = await _decode_purpose_token(db, token, EMAIL_VERIFY_AUDIENCE, "email")
+    if decoded is None:
+        return None
+    user, email = decoded
+    if not hmac.compare_digest(email.encode(), user.email.encode()):
         return None
     return user
 

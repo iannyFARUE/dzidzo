@@ -52,6 +52,14 @@
         </div>
       </div>
     </header>
+    {% if current_user and not current_user.email_verified_at %}
+    <div class="border-b border-amber-200 bg-amber-50">
+      <div class="max-w-6xl mx-auto px-4 sm:px-6 py-2 text-sm text-amber-800">
+        Please confirm your email address. We sent a link to {{ current_user.email }}.
+        <a href="/profile" class="font-medium underline">Resend or change it</a>
+      </div>
+    </div>
+    {% endif %}
     {% block content %} {% endblock content %}
 
     <footer class="border-t border-gray-200 mt-16">

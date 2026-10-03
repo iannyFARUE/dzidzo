@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     # header, so a forged Host can't point password-reset links at another site.
     app_base_url: str = "http://127.0.0.1:8000"
     password_reset_expire_minutes: int = 30
+    email_verify_expire_minutes: int = 24 * 60
 
     # Defaults point at the Mailtrap sandbox; leave SMTP_USERNAME empty to print
     # emails to the console instead of sending them.

@@ -44,15 +44,30 @@ def send_email(to: str, subject: str, text: str, html: str | None = None) -> Non
         logger.exception("failed to send email %r to %s", subject, to)
 
 
-def send_password_reset_email(to: str, name: str, token: str) -> None:
-    context = {
-        "name": name,
-        "reset_url": f"{settings.app_base_url.rstrip('/')}/reset-password?token={token}",
-        "expire_minutes": settings.password_reset_expire_minutes,
-    }
+def site_url(path: str) -> str:
+    return f"{settings.app_base_url.rstrip('/')}{path}"
+
+
+def send_templated_email(to: str, subject: str, template: str, context: dict) -> None:
     send_email(
         to,
-        "Reset your Dzidzo password",
-        email_templates.get_template("password_reset.txt").render(context),
-        email_templates.get_template("password_reset.html").render(context),
+        subject,
+        email_templates.get_template(f"{template}.txt").render(context),
+        email_templates.get_template(f"{template}.html").render(context),
     )
+
+
+def send_password_reset_email(to: str, name: str, token: str) -> None:
+    send_templated_email(to, "Reset your Dzidzo password", "password_reset", {
+        "name": name,
+        "reset_url": site_url(f"/reset-password?token={token}"),
+        "expire_minutes": settings.password_reset_expire_minutes,
+    })
+
+
+def send_verification_email(to: str, name: str, token: str) -> None:
+    send_templated_email(to, "Confirm your email for Dzidzo", "verify_email", {
+        "name": name,
+        "verify_url": site_url(f"/verify-email?token={token}"),
+        "expire_hours": settings.email_verify_expire_minutes // 60,
+    })

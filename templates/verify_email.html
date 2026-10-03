@@ -1,0 +1,22 @@
+{% extends "layout.html" %} {% block content %}
+<div class="max-w-sm mx-auto px-4 sm:px-6 py-16 text-center">
+  {% if verified %}
+  <h1 class="font-serif text-3xl font-bold text-gray-900">Email confirmed.</h1>
+  <p class="mt-2 text-sm text-gray-500">Thanks! Your email address is confirmed.</p>
+  <a
+    href="{{ '/profile' if current_user else '/login' }}"
+    class="mt-8 inline-block bg-gray-900 hover:bg-gray-800 text-white text-sm font-semibold rounded-full px-5 py-2.5"
+  >
+    {{ "Go to your profile" if current_user else "Sign in" }}
+  </a>
+  {% else %}
+  <h1 class="font-serif text-3xl font-bold text-gray-900">Link not valid.</h1>
+  <p class="mt-2 text-sm text-gray-500">
+    This confirmation link is invalid or has expired, or your email has changed since it was sent.
+  </p>
+  <a href="/profile" class="mt-8 inline-block text-sm font-medium text-gray-900 underline">
+    Send a new link from your profile
+  </a>
+  {% endif %}
+</div>
+{% endblock content %}

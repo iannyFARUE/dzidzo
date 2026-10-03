@@ -33,6 +33,7 @@ class UserPublic(BaseModel):
 
 class UserPrivate(UserPublic):
     email: str
+    email_verified_at: datetime | None
 
 
 class UserReplace(UserBase):
@@ -58,6 +59,10 @@ class PasswordForgot(BaseModel):
 class PasswordReset(BaseModel):
     token: str = Field(min_length=1)
     new_password: str = Field(min_length=8, max_length=128)
+
+
+class EmailVerify(BaseModel):
+    token: str = Field(min_length=1)
 
 
 class Message(BaseModel):

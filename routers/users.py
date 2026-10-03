@@ -5,12 +5,15 @@ from auth import (
     CurrentUser,
     authenticate_user,
     create_access_token,
+    create_email_verification_token,
     create_password_reset_token,
     get_user_from_reset_token,
+    get_user_from_verification_token,
     hash_password,
     verify_password,
 )
 from schemas import (
+    EmailVerify,
     Message,
     PasswordForgot,
     PasswordReset,
@@ -82,12 +85,38 @@ async def reset_password(db: AsyncSession, token: str, new_password: str) -> mod
     return user
 
 
+def send_verification(background_tasks: BackgroundTasks, user: models.User) -> None:
+    background_tasks.add_task(
+        mail.send_verification_email, user.email, user.name, create_email_verification_token(user)
+    )
+
+
+def change_email(background_tasks: BackgroundTasks, user: models.User, email: str) -> None:
+    """Set a new email; a changed address starts unverified and gets a fresh link."""
+    if email == user.email:
+        return
+    user.email = email
+    user.email_verified_at = None
+    send_verification(background_tasks, user)
+
+
+async def verify_email(db: AsyncSession, token: str) -> models.User | None:
+    user = await get_user_from_verification_token(db, token)
+    if user is None:
+        return None
+    # Following the link again is harmless and keeps the original verification time.
+    if user.email_verified_at is None:
+        user.email_verified_at = datetime.now(UTC)
+        await db.commit()
+    return user
+
+
 def ensure_self(user_id: int, current_user: models.User) -> None:
     if user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="cannot modify another user")
 
 @router.post("/", response_model=UserPrivate, status_code=status.HTTP_201_CREATED)
-async def create_user(user_in: UserCreate, db: DbSession):
+async def create_user(user_in: UserCreate, db: DbSession, background_tasks: BackgroundTasks):
     await check_username_email_available(db, user_in.username, user_in.email)
 
     user = models.User(
@@ -96,6 +125,7 @@ async def create_user(user_in: UserCreate, db: DbSession):
     )
     db.add(user)
     await db.commit()
+    send_verification(background_tasks, user)
     return user
 
 
@@ -127,6 +157,25 @@ async def reset_password_endpoint(body: PasswordReset, db: DbSession):
     return Message(detail="password has been reset")
 
 
+@router.post("/verify-email", response_model=UserPrivate)
+async def verify_email_endpoint(body: EmailVerify, db: DbSession):
+    user = await verify_email(db, body.token)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="verification link is invalid or has expired",
+        )
+    return user
+
+
+@router.post("/me/verify-email", response_model=Message, status_code=status.HTTP_202_ACCEPTED)
+async def resend_verification(current_user: CurrentUser, background_tasks: BackgroundTasks):
+    if current_user.email_verified_at is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="email is already verified")
+    send_verification(background_tasks, current_user)
+    return Message(detail="verification email sent")
+
+
 @router.get("/me", response_model=UserPrivate)
 async def read_me(current_user: CurrentUser):
     return current_user
@@ -155,7 +204,9 @@ async def get_user(user_id: int, db: DbSession):
     return user
 
 @router.patch("/{user_id}", response_model=UserPrivate)
-async def update_user(user_id: int, user_in: UserUpdate, db: DbSession, current_user: CurrentUser):
+async def update_user(
+    user_id: int, user_in: UserUpdate, db: DbSession, current_user: CurrentUser, background_tasks: BackgroundTasks
+):
     ensure_self(user_id, current_user)
     user = current_user
 
@@ -167,6 +218,8 @@ async def update_user(user_id: int, user_in: UserUpdate, db: DbSession, current_
         exclude_user_id=user.id,
     )
 
+    if "email" in updates:
+        change_email(background_tasks, user, updates.pop("email"))
     for field, value in updates.items():
         setattr(user, field, value)
 
@@ -175,7 +228,9 @@ async def update_user(user_id: int, user_in: UserUpdate, db: DbSession, current_
 
 
 @router.put("/{user_id}", response_model=UserPrivate)
-async def replace_user(user_id: int, user_in: UserReplace, db: DbSession, current_user: CurrentUser):
+async def replace_user(
+    user_id: int, user_in: UserReplace, db: DbSession, current_user: CurrentUser, background_tasks: BackgroundTasks
+):
     ensure_self(user_id, current_user)
     user = current_user
 
@@ -183,7 +238,7 @@ async def replace_user(user_id: int, user_in: UserReplace, db: DbSession, curren
 
     user.username = user_in.username
     user.name = user_in.name
-    user.email = user_in.email
+    change_email(background_tasks, user, user_in.email)
 
     await db.commit()
     return user
@@ -197,7 +252,7 @@ async def delete_user(user_id: int, db: DbSession, current_user: CurrentUser):
 
 
 @router.post("/{user_id}/restore", response_model=UserPrivate)
-async def restore_user(user_id: int, restore_in: UserRestore, db: DbSession):
+async def restore_user(user_id: int, restore_in: UserRestore, db: DbSession, background_tasks: BackgroundTasks):
     # Missing, active and wrong-password cases all fail identically (and take the same
     # time), so this endpoint can't be used to probe accounts or test passwords.
     user = await db.get(models.User, user_id)
@@ -213,7 +268,7 @@ async def restore_user(user_id: int, restore_in: UserRestore, db: DbSession):
     await check_username_email_available(db, username, email, exclude_user_id=user.id)
 
     user.username = username
-    user.email = email
+    change_email(background_tasks, user, email)
     user.deleted_at = None
 
     await db.commit()

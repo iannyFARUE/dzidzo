@@ -25,9 +25,12 @@ from pagination import PageParams, PageResult, Pagination, paginate
 from routers.posts import NEWEST_FIRST, get_or_create_tags, unique_slug
 from routers.users import (
     FORGOT_PASSWORD_MESSAGE,
+    change_email,
     check_username_email_available,
     request_password_reset,
     reset_password,
+    send_verification,
+    verify_email,
 )
 from storage import Storage, get_storage
 from templating import templates
@@ -222,6 +225,7 @@ async def register_form(request: Request, current_user: OptionalUser, next: str 
 async def register(
     request: Request,
     db: DbSession,
+    background_tasks: BackgroundTasks,
     name: Annotated[str, Form()] = "",
     username: Annotated[str, Form()] = "",
     email: Annotated[str, Form()] = "",
@@ -264,6 +268,7 @@ async def register(
     )
     db.add(user)
     await db.commit()
+    send_verification(background_tasks, user)
 
     response = RedirectResponse(safe_next(next), status_code=status.HTTP_303_SEE_OTHER)
     set_auth_cookie(request, response, user)
@@ -350,8 +355,21 @@ async def reset_password_submit(
     return RedirectResponse(url, status_code=status.HTTP_303_SEE_OTHER)
 
 
+@router.get("/verify-email", include_in_schema=False, name="verify_email")
+async def verify_email_page(request: Request, db: DbSession, token: str = ""):
+    user = await verify_email(db, token) if token else None
+    return templates.TemplateResponse(
+        request,
+        "verify_email.html",
+        {"title": "Confirm your email", "verified": user is not None},
+        status_code=status.HTTP_200_OK if user else status.HTTP_400_BAD_REQUEST,
+    )
+
+
 PROFILE_NOTICES = {
     "details": "Your profile has been updated.",
+    "email_changed": "Your profile has been updated. We sent a link to your new email so you can confirm it.",
+    "verification_sent": "We sent a new confirmation link to your email.",
     "avatar": "Your profile photo has been updated.",
     "avatar_removed": "Your profile photo has been removed.",
 }
@@ -398,6 +416,7 @@ async def profile(request: Request, current_user: OptionalUser, saved: str | Non
 async def update_profile(
     request: Request,
     db: DbSession,
+    background_tasks: BackgroundTasks,
     current_user: OptionalUser,
     name: Annotated[str, Form()] = "",
     username: Annotated[str, Form()] = "",
@@ -426,11 +445,21 @@ async def update_profile(
             status_code=status.HTTP_409_CONFLICT,
         )
 
+    email_changed = user_in.email != current_user.email
     current_user.name = user_in.name
     current_user.username = user_in.username
-    current_user.email = user_in.email
+    change_email(background_tasks, current_user, user_in.email)
     await db.commit()
-    return profile_redirect(request, "details")
+    return profile_redirect(request, "email_changed" if email_changed else "details")
+
+
+@router.post("/profile/verify-email", include_in_schema=False, name="resend_verification")
+async def resend_verification(request: Request, background_tasks: BackgroundTasks, current_user: OptionalUser):
+    if current_user is None:
+        return login_redirect(request, next_path="/profile")
+    if current_user.email_verified_at is None:
+        send_verification(background_tasks, current_user)
+    return profile_redirect(request, "verification_sent")
 
 
 @router.post("/profile/avatar", include_in_schema=False, name="update_avatar")

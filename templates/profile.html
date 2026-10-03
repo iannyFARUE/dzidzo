@@ -108,7 +108,17 @@
         {% if errors.email %}
         <p class="mt-1 text-sm text-red-600">{{ errors.email }}</p>
         {% else %}
-        <p class="mt-1 text-xs text-gray-400">Only you can see your email.</p>
+        <p class="mt-1 text-xs text-gray-400">
+          Only you can see your email.
+          {% if user.email_verified_at %}
+          <span class="ml-1 text-green-700">✓ Confirmed</span>
+          {% else %}
+          <span class="ml-1 text-amber-700">Not confirmed.</span>
+          <button type="submit" form="resend-verification" class="text-gray-600 hover:text-gray-900 underline">
+            Resend link
+          </button>
+          {% endif %}
+        </p>
         {% endif %}
       </div>
 
@@ -119,6 +129,8 @@
         Save changes
       </button>
     </form>
+    {# Outside the details form (forms can't nest); the button above targets it by id. #}
+    <form id="resend-verification" method="post" action="/profile/verify-email" hidden></form>
   </section>
 </div>
 
