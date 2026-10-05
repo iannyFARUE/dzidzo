@@ -46,13 +46,13 @@ class User(Base):
             "ux_users_username_active",
             "username",
             unique=True,
-            sqlite_where=text("deleted_at IS NULL"),
+            postgresql_where=text("deleted_at IS NULL"),
         ),
         Index(
             "ux_users_email_active",
             "email",
             unique=True,
-            sqlite_where=text("deleted_at IS NULL"),
+            postgresql_where=text("deleted_at IS NULL"),
         ),
     )
 

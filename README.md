@@ -23,7 +23,8 @@ A Medium-style blogging platform built with FastAPI. People can sign up, write s
 | Layer | Tools |
 | --- | --- |
 | Web framework | [FastAPI](https://fastapi.tiangolo.com/) |
-| Database | SQLite via SQLAlchemy 2 (async) + aiosqlite |
+| Database | PostgreSQL via SQLAlchemy 2 (async) + asyncpg |
+| Migrations | [Alembic](https://alembic.sqlalchemy.org/) |
 | Validation & settings | Pydantic, pydantic-settings |
 | Auth | PyJWT, pwdlib (Argon2) |
 | Templates | Jinja2 |
@@ -37,6 +38,7 @@ A Medium-style blogging platform built with FastAPI. People can sign up, write s
 
 - Python 3.14+
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
+- PostgreSQL, with a database and a user that owns it
 - Node.js and npm (only needed to build the CSS)
 
 ### 1. Install dependencies
@@ -48,7 +50,7 @@ npm install
 
 ### 2. Configure the environment
 
-Copy the example file and set a real secret key:
+Copy the example file, then set your database connection and a real secret key:
 
 ```bash
 cp .env.example .env
@@ -57,6 +59,7 @@ python -c "import secrets; print(secrets.token_hex(32))"   # paste the output in
 
 | Variable | Default | Description |
 | --- | --- | --- |
+| `DATABASE_URL` | *(required)* | PostgreSQL connection, e.g. `postgresql+asyncpg://user:password@localhost:5432/dzidzodb`. Percent-encode special characters in the password: `@` becomes `%40`, `:` becomes `%3A`, `/` becomes `%2F`. |
 | `SECRET_KEY` | *(required)* | Key used to sign JWTs. Use a long random value. |
 | `ALGORITHM` | `HS256` | JWT signing algorithm |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | How long a login stays valid, for both the API token and the cookie |
@@ -84,7 +87,15 @@ Development email goes to a [Mailtrap](https://mailtrap.io) sandbox inbox, which
 
 If you skip this, emails are printed to the server console, which also works for local testing.
 
-### 3. Build the CSS
+### 3. Create the database tables
+
+```bash
+uv run alembic upgrade head
+```
+
+Run this again whenever you pull changes that add a migration. The app doesn't create or change tables itself.
+
+### 4. Build the CSS
 
 ```bash
 npm run build:css     # one-off, minified build
@@ -93,7 +104,7 @@ npm run watch:css     # rebuild on change while developing
 
 The output goes to `static/dist/style.css`. Git ignores it, so you need to build it after cloning.
 
-### 4. Run the server
+### 5. Run the server
 
 ```bash
 uv run fastapi dev main.py
@@ -104,8 +115,6 @@ Then open:
 - http://127.0.0.1:8000: the blog
 - http://127.0.0.1:8000/docs: interactive API docs (Swagger UI)
 
-The SQLite database (`blog.db`) and its tables are created automatically on first start.
-
 ## Project structure
 
 ```
@@ -113,6 +122,8 @@ The SQLite database (`blog.db`) and its tables are created automatically on firs
 ├── main.py            # App setup: routers, static/media mounts, table creation on startup
 ├── config.py          # Settings loaded from .env
 ├── database.py        # Async engine, session factory, get_db dependency
+├── alembic.ini        # Alembic settings (the database URL comes from .env)
+├── migrations/        # Alembic environment and migration scripts (versions/)
 ├── models.py          # SQLAlchemy models: User, Post, Tag
 ├── schemas.py         # Pydantic request/response schemas
 ├── auth.py            # Password hashing, JWT creation/validation, current-user dependencies
@@ -282,5 +293,9 @@ The same rule applies to covers: `cover_image` is read-only in the post JSON and
   - A deleted account can't log in, and its tokens stop working.
   - Its username and email become free for others to register.
   - When restoring, you can pick a new username or email if the old one has been taken.
-- **No migrations:** tables are created with `create_all` on startup, and new *nullable* columns are added to existing tables automatically (see `add_missing_columns` in [database.py](database.py)). Any other change to `models.py` (a new required column, a renamed column, a new index) needs `blog.db` deleted during development, or Alembic for real schema migrations.
+- **Schema changes go through Alembic.** After changing `models.py`:
+  1. `uv run alembic revision --autogenerate -m "describe the change"` writes a migration to `migrations/versions/`.
+  2. Read the generated file before applying it. Autogenerate can't detect everything; renamed columns, for example, come out as drop + add, which would lose data.
+  3. `uv run alembic upgrade head` applies it. `uv run alembic downgrade -1` undoes the last one.
+  4. `uv run alembic check` confirms the models and the database match.
 - **Tokens can't be revoked early:** logging out clears the cookie, but a copied JWT stays valid until it expires.

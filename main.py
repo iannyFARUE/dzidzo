@@ -4,16 +4,14 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from config import settings
-from database import Base, add_missing_columns, engine
+from database import engine
 from errors import register_exception_handlers
 from routers import frontend, posts, users
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        await conn.run_sync(add_missing_columns)
+    # The schema is managed by Alembic: run `alembic upgrade head` before starting.
     yield
     await engine.dispose()
 
