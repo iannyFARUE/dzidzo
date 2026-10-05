@@ -29,6 +29,7 @@ A Medium-style blogging platform built with FastAPI. People can sign up, write s
 | Auth | PyJWT, pwdlib (Argon2) |
 | Templates | Jinja2 |
 | Image processing | Pillow |
+| File storage | Local disk or Amazon S3 (boto3) |
 | Styling | Tailwind CSS v4 (CLI) |
 | Package management | [uv](https://docs.astral.sh/uv/) (Python), npm (CSS build) |
 
@@ -67,6 +68,13 @@ python -c "import secrets; print(secrets.token_hex(32))"   # paste the output in
 | `MEDIA_URL` | `/media` | URL path that serves `MEDIA_ROOT` |
 | `MAX_AVATAR_BYTES` | `5242880` (5 MB) | Largest profile photo upload allowed |
 | `MAX_COVER_BYTES` | `10485760` (10 MB) | Largest cover image upload allowed |
+| `STORAGE_BACKEND` | `local` | Where uploads go: `local` (`MEDIA_ROOT`) or `s3` |
+| `S3_BUCKET` | *(empty)* | S3 bucket name (required when `STORAGE_BACKEND=s3`) |
+| `S3_REGION` | *(empty)* | The bucket's AWS region, e.g. `af-south-1` (required when `STORAGE_BACKEND=s3`) |
+| `S3_ACCESS_KEY_ID` | *(empty)* | AWS access key. If empty, boto3's usual credential chain is used (`~/.aws`, env vars, IAM role). |
+| `S3_SECRET_ACCESS_KEY` | *(empty)* | AWS secret key |
+| `S3_PUBLIC_URL` | bucket URL | Base URL files are served from, e.g. a CloudFront domain. Defaults to `https://<bucket>.s3.<region>.amazonaws.com`. |
+| `S3_ENDPOINT_URL` | *(empty)* | Only for S3-compatible services such as MinIO or LocalStack |
 | `APP_BASE_URL` | `http://127.0.0.1:8000` | Public address of the site, used to build links in emails |
 | `PASSWORD_RESET_EXPIRE_MINUTES` | `30` | How long a password reset link stays valid |
 | `EMAIL_VERIFY_EXPIRE_MINUTES` | `1440` (24 hours) | How long an email confirmation link stays valid |
@@ -131,7 +139,7 @@ Then open:
 ├── images.py          # Shared image validation and WebP re-encoding (Pillow)
 ├── avatars.py         # Profile photo resizing and replacement
 ├── covers.py          # Post cover image resizing and replacement
-├── storage.py         # File storage interface + local-disk implementation
+├── storage.py         # File storage interface + local-disk and S3 implementations
 ├── errors.py          # JSON errors for /api, HTML error page for everything else
 ├── templating.py      # Jinja2 setup (injects current_user into every template)
 ├── routers/
@@ -265,12 +273,61 @@ The same rule applies to covers: `cover_image` is read-only in the post JSON and
   - keeps transparency and animation
 - **Storage:**
   - Each file gets a random name.
-  - Profile photos go in `MEDIA_ROOT/profile_pics/`, cover images in `MEDIA_ROOT/covers/`.
+  - Profile photos go under `profile_pics/`, cover images under `covers/`, either in `MEDIA_ROOT` or in an S3 bucket (see below).
   - When a photo or cover is replaced or removed, the old file is deleted only after the database points to the new one. Deleting a post also deletes its cover.
-- **Moving to cloud storage (e.g. S3):**
-  - [storage.py](storage.py) defines a `Storage` interface with two methods: `save(key, data, content_type)`, which returns the file's public URL, and `delete(url)`.
-  - `LocalStorage` writes files to `MEDIA_ROOT`.
-  - To use S3, write a class with those two methods and return it from `get_storage()`. No other code needs to change.
+- **Backends:** [storage.py](storage.py) defines a `Storage` interface with two methods: `save(key, data, content_type)`, which returns the file's public URL, and `delete(url)`. `STORAGE_BACKEND` picks the implementation:
+  - `local` (default): `LocalStorage` writes to `MEDIA_ROOT`, served at `MEDIA_URL`.
+  - `s3`: `S3Storage` uploads to an S3 bucket with boto3, in a worker thread so the event loop isn't blocked.
+
+### Storing uploads in Amazon S3
+
+1. **Create a bucket.** In its **Permissions** tab, turn off *Block all public access*. Leave the other settings at their defaults; ACLs stay disabled.
+2. **Allow public reads of the upload folders** with this bucket policy (replace `YOUR-BUCKET`):
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [{
+       "Sid": "PublicReadUploads",
+       "Effect": "Allow",
+       "Principal": "*",
+       "Action": "s3:GetObject",
+       "Resource": [
+         "arn:aws:s3:::YOUR-BUCKET/profile_pics/*",
+         "arn:aws:s3:::YOUR-BUCKET/covers/*"
+       ]
+     }]
+   }
+   ```
+   Or keep the bucket private and serve it through CloudFront with Origin Access Control, then set `S3_PUBLIC_URL` to the CloudFront domain.
+3. **Create an IAM user for the app** that can only write and delete in those folders, and create an access key for it:
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [{
+       "Effect": "Allow",
+       "Action": ["s3:PutObject", "s3:DeleteObject"],
+       "Resource": [
+         "arn:aws:s3:::YOUR-BUCKET/profile_pics/*",
+         "arn:aws:s3:::YOUR-BUCKET/covers/*"
+       ]
+     }]
+   }
+   ```
+4. **Configure `.env`:**
+   ```bash
+   STORAGE_BACKEND=s3
+   S3_BUCKET=your-bucket
+   S3_REGION=af-south-1          # the bucket's region
+   S3_ACCESS_KEY_ID=...
+   S3_SECRET_ACCESS_KEY=...
+   ```
+   On AWS hosting (EC2, ECS, Lambda), leave the two key settings empty and give the instance or task an IAM role with the policy above. boto3 picks it up automatically.
+
+Notes:
+- **Caching:** objects are uploaded with `Cache-Control: public, max-age=31536000, immutable`. That's safe because a file's name never gets reused.
+- **URLs are stored in full:** the database stores each file's full URL. If you later change `S3_PUBLIC_URL` (for example, to add CloudFront), existing rows keep their old URLs and need updating with SQL.
+- **Switching backends doesn't move files:** going from `local` to `s3` doesn't copy existing uploads. Old `/media/...` URLs keep working only while the server still serves `MEDIA_ROOT`. The default avatar is always served locally.
+- **Failed deletes:** if deleting an old file from S3 fails, the error is logged and the request still succeeds. The worst case is an orphaned object.
 
 ## Email verification
 

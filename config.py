@@ -1,4 +1,6 @@
-from pydantic import SecretStr
+from typing import Literal, Self
+
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,6 +20,19 @@ class Settings(BaseSettings):
     max_avatar_bytes: int = 5 * 1024 * 1024
     max_cover_bytes: int = 10 * 1024 * 1024
 
+    # Where uploaded profile photos and covers go: "local" (MEDIA_ROOT) or "s3".
+    storage_backend: Literal["local", "s3"] = "local"
+    s3_bucket: str = ""
+    s3_region: str = ""
+    # Leave both empty to use boto3's usual credential chain (env vars, ~/.aws, IAM role).
+    s3_access_key_id: str = ""
+    s3_secret_access_key: SecretStr = SecretStr("")
+    # Base URL files are served from, e.g. a CloudFront domain. Defaults to the bucket's
+    # own https://<bucket>.s3.<region>.amazonaws.com address.
+    s3_public_url: str = ""
+    # Only for S3-compatible services such as MinIO or LocalStack.
+    s3_endpoint_url: str = ""
+
     # Used to build links in emails. Taken from config rather than the request's Host
     # header, so a forged Host can't point password-reset links at another site.
     app_base_url: str = "http://127.0.0.1:8000"
@@ -32,6 +47,12 @@ class Settings(BaseSettings):
     smtp_password: SecretStr = SecretStr("")
     smtp_starttls: bool = True
     mail_from: str = "Dzidzo <no-reply@dzidzo.local>"
+
+    @model_validator(mode="after")
+    def _s3_needs_bucket_and_region(self) -> Self:
+        if self.storage_backend == "s3" and not (self.s3_bucket and self.s3_region):
+            raise ValueError("STORAGE_BACKEND=s3 requires S3_BUCKET and S3_REGION")
+        return self
 
 
 settings = Settings()
