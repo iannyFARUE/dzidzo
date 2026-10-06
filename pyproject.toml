@@ -15,3 +15,9 @@ dependencies = [
     "pyjwt>=2.15.1",
     "sqlalchemy[asyncio]>=2.1.1",
 ]
+
+[dependency-groups]
+dev = [
+    "moto[s3]>=5.2.3",
+    "pytest>=9.1.1",
+]
