@@ -92,7 +92,7 @@ async def get_post(post_id: int, db: DbSession):
     return post
 
 
-@router.post("/", response_model=PostResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=PostResponse, status_code=status.HTTP_201_CREATED)
 async def create_post(post_in: PostCreate, db: DbSession, current_user: CurrentUser):
     post = models.Post(
         slug=await unique_slug(db, post_in.title),

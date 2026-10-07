@@ -116,7 +116,7 @@ def ensure_self(user_id: int, current_user: models.User) -> None:
     if user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="cannot modify another user")
 
-@router.post("/", response_model=UserPrivate, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=UserPrivate, status_code=status.HTTP_201_CREATED)
 async def create_user(user_in: UserCreate, db: DbSession, background_tasks: BackgroundTasks):
     await check_username_email_available(db, user_in.username, user_in.email)
 
