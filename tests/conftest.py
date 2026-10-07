@@ -4,7 +4,7 @@ from collections.abc import AsyncGenerator
 os.environ["DATABASE_URL"] = (
     "postgresql+asyncpg://dzidzo:dzidzo%402022@localhost:5432/test_dzidzodb"
 )
-os.environ["S3_BUCKET_NAME"] = "test-bucket"
+os.environ["S3_BUCKET"] = "test-bucket"
 os.environ["SECRET_KEY"] = "test-secret-key-for-testing-only"
 
 
@@ -27,6 +27,7 @@ from sqlalchemy.pool import NullPool
 
 from database import Base, get_db
 from main import app
+from storage import S3Storage, get_storage
 
 pytest_plugins = ["anyio"]
 
@@ -86,7 +87,7 @@ async def db_session(
 def mocked_aws():
     with mock_aws():
         s3 = boto3.client("s3", region_name="us-east-1")
-        s3.create_bucket(Bucket=os.environ["S3_BUCKET_NAME"])
+        s3.create_bucket(Bucket=os.environ["S3_BUCKET"])
         yield s3
 
 ## Client Fixture
@@ -100,6 +101,9 @@ async def client(
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
+    # Built inside mock_aws so uploads land in the mocked bucket, not on disk.
+    storage = S3Storage(os.environ["S3_BUCKET"], os.environ["S3_REGION"])
+    app.dependency_overrides[get_storage] = lambda: storage
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
