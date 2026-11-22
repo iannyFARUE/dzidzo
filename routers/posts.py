@@ -10,7 +10,7 @@ from schemas import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 import models
-from fastapi import Depends, FastAPI, Request, HTTPException, UploadFile, status, APIRouter
+from fastapi import Depends, HTTPException, UploadFile, status, APIRouter
 from typing import Annotated
 from database import get_db
 from sqlalchemy import select
